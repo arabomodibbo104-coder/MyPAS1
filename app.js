@@ -63,7 +63,7 @@ async function handleStaffLogin(e) {
     if (error || !data || !data.length) throw new Error("Invalid Staff ID or password.");
     const { shadow_email } = data[0];
     const { error: signInErr } = await sb.auth.signInWithPassword({ email: shadow_email, password: shadowPasswordFor(staff_code, password) });
-    if (signInErr) throw new Error("Login failed. Contact admin if this persists.");
+    if (signInErr) throw new Error("Login failed: " + signInErr.message + " (code: " + (signInErr.code || signInErr.status || "unknown") + ")");
     await bootAfterLogin();
   } catch (err) {
     showLoginError(err.message || "Login failed.");
@@ -88,7 +88,7 @@ async function handleStudentLogin(e) {
     if (error || !data || !data.length) throw new Error("Invalid Admission Number, Class, or Password.");
     const { shadow_email } = data[0];
     const { error: signInErr } = await sb.auth.signInWithPassword({ email: shadow_email, password: shadowPasswordFor(admission_no, password) });
-    if (signInErr) throw new Error("Login failed. Contact your school admin.");
+    if (signInErr) throw new Error("Login failed: " + signInErr.message + " (code: " + (signInErr.code || signInErr.status || "unknown") + ")");
     await bootAfterLogin();
   } catch (err) {
     showLoginError(err.message || "Login failed.");
