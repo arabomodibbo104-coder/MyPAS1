@@ -9,7 +9,9 @@ const NAV_BY_ROLE = {
     ["timetable","fa-calendar-days","Timetable"], ["certificates","fa-award","Certificates & Awards"],
     ["analytics","fa-chart-line","Analytics"], ["catracker","fa-list-check","CA Tracker"],
     ["fees","fa-money-bill","Fees"], ["websites","fa-globe","School Websites"],
-    ["importTool","fa-file-import","Bulk Import"], ["settings","fa-gear","Settings"],
+    ["importTool","fa-file-import","Bulk Import"], ["classManagement","fa-school","Manage Classes"],
+    ["transferStudents","fa-people-arrows","Transfer Students"], ["scoreControl","fa-lock","Score Control"],
+    ["settings","fa-gear","Settings"],
   ],
   headmaster: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["settings","fa-gear","My Profile"]],
   principal: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["settings","fa-gear","My Profile"]],
@@ -20,6 +22,7 @@ const NAV_BY_ROLE = {
 const TAB_TITLES = { dashboard:"Dashboard", classes:"Classes & Scores", masterlist:"Master List", assignments:"Curriculum & Assignments",
   staffDirectory:"Staff Directory", students:"Students", timetable:"Timetable", certificates:"Certificates & Awards",
   analytics:"Analytics", catracker:"CA Tracker", fees:"Fees", websites:"School Websites", importTool:"Bulk Import",
+  classManagement:"Manage Classes", transferStudents:"Transfer Students", scoreControl:"Score Control",
   settings:"Settings", myReport:"My Report Card" };
 
 function buildSidebar() {
@@ -39,7 +42,8 @@ function switchTab(id) {
   const renderers = { dashboard: renderDashboard, classes: renderClasses, masterlist: renderMasterList,
     staffDirectory: renderStaffDirectory, students: renderStudents, fees: renderFees, settings: renderSettings, myReport: renderMyReport,
     assignments: renderAssignments, timetable: renderTimetable, certificates: renderCertificates,
-    analytics: renderAnalytics, catracker: renderCaTracker, websites: renderWebsites, importTool: renderImportTool };
+    analytics: renderAnalytics, catracker: renderCaTracker, websites: renderWebsites, importTool: renderImportTool,
+    classManagement: renderClassManagement, transferStudents: renderTransferStudents, scoreControl: renderScoreControl };
   (renderers[id] || (() => { document.getElementById(`panel-${id}`).innerHTML = "Coming soon."; }))();
 }
 
@@ -112,53 +116,158 @@ async function loadClassScoreGrid() {
   const classId = state.currentClass.id, termId = state.currentTermId;
   const isNurseryPrimary = state.currentClass.category === "nursery" || state.currentClass.category === "primary";
 
-  const [{ data: students }, { data: classSubjects }, { data: scores }] = await Promise.all([
+  const [{ data: students }, { data: classSubjects }, { data: scores }, { data: windows }] = await Promise.all([
     sb.from("students").select("id, full_name, admission_no").eq("class_id", classId).eq("is_active", true).order("full_name"),
     sb.from("class_subjects").select("subject_id, subjects(id,name)").eq("class_id", classId),
     sb.from("student_scores").select("*").eq("class_id", classId).eq("term_id", termId),
+    sb.from("term_period_windows").select("*").eq("term_id", termId),
   ]);
 
   let subjectList = (classSubjects || []).map(cs => cs.subjects);
-  // Teachers only see/edit their own assigned subjects for this class
   if (state.role === "teacher") {
     const { data: mySubs } = await sb.from("class_teacher_subjects").select("subject_id").eq("staff_id", state.staff.id).eq("class_id", classId);
     const allowed = new Set((mySubs || []).map(s => s.subject_id));
     subjectList = subjectList.filter(s => allowed.has(s.id));
   }
 
-  if (!subjectList.length) { body.innerHTML = `<p style="color:var(--dash-muted)">No subjects assigned to this class yet. ${state.role === "admin" ? "Add some in Settings." : ""}</p>`; return; }
+  if (!subjectList.length) { body.innerHTML = `<p style="color:var(--dash-muted)">No subjects assigned to this class yet. ${state.role === "admin" ? "Add some in Curriculum & Assignments." : ""}</p>`; return; }
   if (!students || !students.length) { body.innerHTML = `<p style="color:var(--dash-muted)">No students in this class yet.</p>`; return; }
 
   const scoreMap = {};
   (scores || []).forEach(s => { scoreMap[s.student_id + "_" + s.subject_id] = s; });
+  const windowMap = {}; (windows || []).forEach(w => { windowMap[w.period] = w.is_open; });
+
+  // Locks + approved unlock exceptions, for this class+term (all subjects at once)
+  const { data: locks } = await sb.from("subject_score_locks").select("*").eq("class_id", classId).eq("term_id", termId);
+  const lockSet = new Set((locks || []).map(l => l.subject_id + "_" + l.period));
+  const { data: approvedReqs } = await sb.from("score_unlock_requests").select("*").eq("class_id", classId).eq("term_id", termId).eq("status", "approved");
+  state.currentApprovedExceptions = approvedReqs || [];
+
+  const isPrivileged = ["admin", "headmaster", "principal"].includes(state.role);
+  function cellEditable(subjectId, period, studentId) {
+    if (isPrivileged) return true;
+    if (!windowMap[period]) return false;
+    const locked = lockSet.has(subjectId + "_" + period);
+    if (!locked) return true;
+    return (state.currentApprovedExceptions || []).some(r =>
+      r.subject_id === subjectId && r.period === period && r.student_ids.includes(studentId));
+  }
 
   const caCols = isNurseryPrimary ? ["ca1","ca2"] : ["ca1","ca2","ca3"];
-  let html = `<div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Student</th>`;
+  const periodOf = { ca1: "ca1", ca2: "ca2", ca3: "ca3", exam_score: "exam" };
+
+  let html = `<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;">`;
+  ["ca1","ca2","ca3","exam"].forEach(p => {
+    if (p === "ca3" && isNurseryPrimary) return;
+    const open = !!windowMap[p];
+    html += `<span class="tag" style="${open ? '' : 'opacity:.5;'}">${p.toUpperCase()} ${open ? "🟢 Open" : "🔒 Closed"}</span>`;
+  });
+  html += `</div>`;
+
+  html += `<div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Student</th>`;
   subjectList.forEach(s => { html += `<th colspan="${caCols.length + 2}">${s.name}</th>`; });
   html += `</tr><tr><th></th>`;
-  subjectList.forEach(() => { caCols.forEach(c => html += `<th>${c.toUpperCase()}</th>`); html += `<th>Exam</th><th>Total</th>`; });
+  subjectList.forEach(subj => {
+    caCols.forEach(c => {
+      const p = periodOf[c];
+      const locked = lockSet.has(subj.id + "_" + p);
+      html += `<th>${c.toUpperCase()}${locked ? ' <i class="fa-solid fa-lock" title="Locked"></i>' : ""}</th>`;
+    });
+    const examLocked = lockSet.has(subj.id + "_exam");
+    html += `<th>Exam${examLocked ? ' <i class="fa-solid fa-lock" title="Locked"></i>' : ""}</th><th>Total</th>`;
+  });
   html += `</tr></thead><tbody>`;
 
   students.forEach(stu => {
     html += `<tr><td class="name-cell">${stu.full_name}</td>`;
     subjectList.forEach(subj => {
       const key = stu.id + "_" + subj.id;
-      const rec = scoreMap[key] || { ca1:0, ca2:0, ca3:0, exam_score:0 };
+      const rec = scoreMap[key] || {};
       caCols.forEach(c => {
-        html += `<td><input type="number" min="0" max="${c==='exam_score'?70:isNurseryPrimary?20:10}" value="${rec[c] || 0}" data-stu="${stu.id}" data-subj="${subj.id}" data-field="${c}" onchange="markDirty(this)"/></td>`;
+        const period = periodOf[c];
+        const editable = cellEditable(subj.id, period, stu.id);
+        const val = rec[c] === null || rec[c] === undefined ? "" : rec[c];
+        html += `<td><input type="number" min="0" max="${isNurseryPrimary?20:10}" value="${val}" placeholder="—"
+          data-stu="${stu.id}" data-subj="${subj.id}" data-field="${c}" onchange="markDirty(this)"
+          ${editable ? "" : "disabled"} style="${editable ? "" : "opacity:.45;"}"/></td>`;
       });
-      html += `<td><input type="number" min="0" max="${isNurseryPrimary?60:70}" value="${rec.exam_score || 0}" data-stu="${stu.id}" data-subj="${subj.id}" data-field="exam_score" onchange="markDirty(this)"/></td>`;
+      const examEditable = cellEditable(subj.id, "exam", stu.id);
+      const examVal = rec.exam_score === null || rec.exam_score === undefined ? "" : rec.exam_score;
+      html += `<td><input type="number" min="0" max="${isNurseryPrimary?60:70}" value="${examVal}" placeholder="—"
+        data-stu="${stu.id}" data-subj="${subj.id}" data-field="exam_score" onchange="markDirty(this)"
+        ${examEditable ? "" : "disabled"} style="${examEditable ? "" : "opacity:.45;"}"/></td>`;
       const total = (rec.ca1||0) + (rec.ca2||0) + (isNurseryPrimary?0:(rec.ca3||0)) + (rec.exam_score||0);
-      html += `<td style="font-weight:800;">${total}</td>`;
+      html += `<td style="font-weight:800;">${total || ""}</td>`;
     });
     html += `</tr>`;
   });
   html += `</tbody></table></div>
     <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
-      <button class="btn btn-green" onclick="saveClassScores()"><i class="fa-solid fa-floppy-disk"></i> Save All Scores</button>
+      <button class="btn btn-green" onclick="saveClassScores()"><i class="fa-solid fa-floppy-disk"></i> Save Scores</button>
       <button class="btn" onclick="viewClassReportCards()"><i class="fa-solid fa-file-lines"></i> View Report Cards</button>
     </div>`;
+
+  // Per-subject submit / request-unlock controls (teachers submit their
+  // own subject; anyone assigned can request an unlock for missed students)
+  if (state.role === "teacher" || isPrivileged) {
+    html += `<div class="settings-card" style="margin-top:16px;"><div class="settings-card-title">Submit / Unlock Scores</div>`;
+    subjectList.forEach(subj => {
+      html += `<div class="settings-row"><span>${subj.name}</span><div style="display:flex;gap:6px;flex-wrap:wrap;">`;
+      ["ca1","ca2","ca3","exam"].forEach(p => {
+        if (p === "ca3" && isNurseryPrimary) return;
+        const locked = lockSet.has(subj.id + "_" + p);
+        const open = !!windowMap[p];
+        if (!open) return;
+        if (!locked) {
+          html += `<button class="btn btn-green" style="font-size:10px;padding:5px 9px;" onclick="submitPeriod('${subj.id}','${p}')">Submit ${p.toUpperCase()}</button>`;
+        } else {
+          html += `<button class="btn" style="font-size:10px;padding:5px 9px;" onclick="openRequestUnlockModal('${subj.id}','${subj.name.replace(/'/g,"&apos;")}','${p}')">Request Unlock (${p.toUpperCase()})</button>`;
+          if (isPrivileged) html += `<button class="btn btn-danger" style="font-size:10px;padding:5px 9px;" onclick="forceUnlock('${subj.id}','${p}')">Force Unlock</button>`;
+        }
+      });
+      html += `</div></div>`;
+    });
+    html += `</div>`;
+  }
+
   body.innerHTML = html;
+}
+
+async function submitPeriod(subjectId, period) {
+  if (!confirm(`Submit ${period.toUpperCase()} for this subject? Once submitted, it locks immediately and you won't be able to edit it without admin approval.`)) return;
+  const { error } = await sb.rpc("submit_score_period", { p_class_id: state.currentClass.id, p_subject_id: subjectId, p_term_id: state.currentTermId, p_period: period });
+  if (error) { alert(error.message); return; }
+  alert("Submitted and locked.");
+  loadClassScoreGrid();
+}
+async function forceUnlock(subjectId, period) {
+  if (!confirm("Force-unlock this subject/period for everyone? Use sparingly.")) return;
+  const { error } = await sb.rpc("force_unlock_subject_period", { p_class_id: state.currentClass.id, p_subject_id: subjectId, p_term_id: state.currentTermId, p_period: period });
+  if (error) { alert(error.message); return; }
+  loadClassScoreGrid();
+}
+async function openRequestUnlockModal(subjectId, subjectName, period) {
+  const { data: students } = await sb.from("students").select("id, full_name").eq("class_id", state.currentClass.id).eq("is_active", true).order("full_name");
+  openModal(`<h3>Request Unlock — ${subjectName} (${period.toUpperCase()})</h3>
+    <p style="font-size:12px;color:var(--dash-muted);">Select the students who missed this test and need their score added.</p>
+    <div class="field" style="max-height:200px;overflow-y:auto;">
+      ${(students||[]).map(s => `<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px;">
+        <input type="checkbox" value="${s.id}" class="unlockStuCheck"/> ${s.full_name}</label>`).join("")}
+    </div>
+    <div class="field"><label>Reason</label><input id="unlockReason" placeholder="e.g. Was absent for the test"/></div>
+    <button class="btn btn-green" style="width:100%;" onclick="submitUnlockRequest('${subjectId}','${period}')">Send Request to Admin</button>`);
+}
+async function submitUnlockRequest(subjectId, period) {
+  const studentIds = [...document.querySelectorAll(".unlockStuCheck:checked")].map(c => c.value);
+  const reason = document.getElementById("unlockReason").value.trim();
+  if (!studentIds.length) { alert("Select at least one student."); return; }
+  const { error } = await sb.from("score_unlock_requests").insert({
+    class_id: state.currentClass.id, subject_id: subjectId, term_id: state.currentTermId, period,
+    staff_id: state.staff.id, student_ids: studentIds, reason,
+  });
+  if (error) { alert(error.message); return; }
+  closeModal();
+  alert("Request sent. The subject stays locked until admin approves.");
 }
 
 function markDirty(input) { input.dataset.dirty = "1"; input.style.borderColor = "var(--dash-green)"; }
@@ -170,13 +279,15 @@ async function saveClassScores() {
   inputs.forEach(inp => {
     const key = inp.dataset.stu + "_" + inp.dataset.subj;
     byKey[key] = byKey[key] || { student_id: inp.dataset.stu, subject_id: inp.dataset.subj };
-    byKey[key][inp.dataset.field] = Number(inp.value) || 0;
+    byKey[key][inp.dataset.field] = inp.value === "" ? null : Number(inp.value);
   });
   // Fill any missing fields from the current cell values (not just dirty ones)
   Object.keys(byKey).forEach(key => {
     const [stu, subj] = key.split("_");
     document.querySelectorAll(`#classBody input[data-stu="${stu}"][data-subj="${subj}"]`).forEach(inp => {
-      byKey[key][inp.dataset.field] = Number(inp.value) || 0;
+      if (!(inp.dataset.field in byKey[key])) {
+        byKey[key][inp.dataset.field] = inp.value === "" ? null : Number(inp.value);
+      }
     });
   });
   const rows = Object.values(byKey).map(r => ({
