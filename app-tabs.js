@@ -321,6 +321,58 @@ async function renderReportCardFor(studentId) {
     <div class="no-print" style="text-align:center;margin-top:16px;">
       <button class="btn btn-green" onclick="window.print()"><i class="fa-solid fa-print"></i> Print</button>
     </div>`;
+  renderReportCardQr(studentId);
+}
+
+// Age + holiday-duration helpers, matching the original app's flexible
+// date parsing and formatting exactly.
+function calcAgeFromDob(dobRaw) {
+  if (!dobRaw) return null;
+  const dob = new Date(dobRaw);
+  if (isNaN(dob)) return null;
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const beforeBirthday = (today.getMonth() < dob.getMonth()) || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate());
+  if (beforeBirthday) age--;
+  return age >= 0 ? age : null;
+}
+function formatDobWithAge(dobRaw) {
+  if (!dobRaw) return "—";
+  const age = calcAgeFromDob(dobRaw);
+  return age !== null ? `${dobRaw} (${age}yrs)` : dobRaw;
+}
+function calcHolidaysDuration(resumptionRaw, closingRaw) {
+  if (!resumptionRaw || !closingRaw) return "—";
+  const start = new Date(resumptionRaw), end = new Date(closingRaw);
+  if (isNaN(start) || isNaN(end)) return "—";
+  const diffDays = Math.round((end - start) / 86400000);
+  if (diffDays < 0) return "—";
+  return `${diffDays} day${diffDays !== 1 ? "s" : ""}`;
+}
+function getAnnualRemark(grade) {
+  const remarks = {
+    A: "Outstanding annual performance! This student has shown exceptional dedication and excellence throughout the entire academic year. Keep soaring higher!",
+    B: "Very good annual performance. This student demonstrated commendable effort and consistency throughout the academic year. With a little more push, excellence is within reach.",
+    C: "Fair annual performance. The student showed moderate effort across all three terms. Greater focus and consistency will produce significantly better results next year.",
+    D: "Weak annual performance. The student needs to significantly improve study habits and dedication. More effort and discipline are required for meaningful progress.",
+    E: "Poor annual performance. The student struggled considerably throughout the academic year. Urgent attention, guidance, and parental support are strongly recommended.",
+    F: "The student failed to meet the required academic standard for the year. Immediate and sustained intervention is necessary to prevent further regression.",
+  };
+  return remarks[grade] || "Academic record incomplete for annual assessment.";
+}
+function getCardCategoryClass(category) {
+  const c = (category || "").toLowerCase();
+  if (c.includes("nursery")) return "category-nursery";
+  if (c.includes("jss")) return "category-jss";
+  if (c.includes("ss")) return "category-ss";
+  return "category-primary";
+}
+// value===null/undefined → not entered yet (dashed blank). A genuine
+// explicit 0 is shown as "0", matching the nullable-scores model.
+function displayScore(value) {
+  return (value === null || value === undefined)
+    ? '<span style="border-bottom:1px dashed #000;display:inline-block;width:20px"></span>'
+    : value;
 }
 
 async function buildReportCardHtml(studentId, termId) {
@@ -333,86 +385,200 @@ async function buildReportCardHtml(studentId, termId) {
   if (!student) return "<p>Student not found.</p>";
   const isNurseryPrimary = student.classes.category === "nursery" || student.classes.category === "primary";
   const settings = state.schoolSettings;
+  const catClass = getCardCategoryClass(student.classes.category);
 
-  // Resolve signatories live from staff table
+  const { count: totalInClass } = await sb.from("students").select("id", { count: "exact", head: true }).eq("class_id", student.class_id).eq("is_active", true);
+
   const wantPosition = isNurseryPrimary ? "Headmaster" : "Principal";
   const { data: sigStaff } = await sb.from("staff").select("full_name, signature_url, positions").contains("positions", [wantPosition]);
   const { data: adminOfficer } = await sb.from("staff").select("full_name, signature_url").contains("positions", ["Admin Officer"]);
-  const signatoryName = (sigStaff && sigStaff[0]?.full_name) || settings[`${wantPosition.toLowerCase()}_fallback_name`] || wantPosition;
-  const signatorySig = (sigStaff && sigStaff[0]?.signature_url) || settings[`${wantPosition.toLowerCase()}_fallback_sig_url`] || "";
-  const adminName = (adminOfficer && adminOfficer[0]?.full_name) || settings.admin_officer_fallback_name || "Admin Officer";
-  const adminSig = (adminOfficer && adminOfficer[0]?.signature_url) || settings.admin_officer_fallback_sig_url || "";
+  const authorityName = (sigStaff && sigStaff[0]?.full_name) || settings[`${wantPosition.toLowerCase()}_fallback_name`] || wantPosition;
+  const authoritySig = (sigStaff && sigStaff[0]?.signature_url) || settings[`${wantPosition.toLowerCase()}_fallback_sig_url`] || "";
+  const adminOfficerName = (adminOfficer && adminOfficer[0]?.full_name) || settings.admin_officer_fallback_name || "Admin Officer";
+  const adminOfficerSig = (adminOfficer && adminOfficer[0]?.signature_url) || settings.admin_officer_fallback_sig_url || "";
+  const website = isNurseryPrimary ? (settings.primary_website || "") : (settings.secondary_website || "");
 
-  let rows = "";
+  const schoolLogoHtml = settings.school_logo_url ? `<img src="${settings.school_logo_url}" class="school-logo-img" crossorigin="anonymous" onerror="this.style.opacity='0'">` : "";
+  const secondaryLogoHtml = settings.secondary_logo_url ? `<img src="${settings.secondary_logo_url}" class="school-logo-img" crossorigin="anonymous" onerror="this.style.opacity='0'">` : "";
+  const authoritySigHtml = authoritySig ? `<img class="sig-img" src="${authoritySig}" crossorigin="anonymous" alt="${wantPosition} Signature">` : "";
+  const adminOfficerSigHtml = adminOfficerSig ? `<img class="sig-img" src="${adminOfficerSig}" crossorigin="anonymous" alt="Admin Officer Signature">` : "";
+
+  let subjRows = "";
+  let subjNo = 0;
   for (const s of (scores || [])) {
+    subjNo++;
+    const anyEntered = s.ca1 !== null || s.ca2 !== null || s.ca3 !== null || s.exam_score !== null;
     const total = (s.ca1||0)+(s.ca2||0)+(isNurseryPrimary?0:(s.ca3||0))+(s.exam_score||0);
-    const allZero = total === 0;
-    const grade = allZero ? "" : gradeFor(total).grade;
-    let subjPos = "";
-    if (!allZero) {
+    const grade = anyEntered ? gradeFor(total).grade : "";
+    let posLabel = "—";
+    if (anyEntered) {
       const { data: ranks } = await sb.rpc("subject_ranks", { p_class_id: student.class_id, p_term_id: termId, p_subject_id: s.subject_id });
       const mine = (ranks || []).find(r => r.student_id === studentId);
-      subjPos = mine ? mine.position_label : "";
+      posLabel = mine ? mine.position_label : "—";
     }
-    rows += `<tr>
-      <td class="subj-name">${s.subjects.name}</td>
-      <td>${allZero ? "-" : s.ca1}</td><td>${allZero ? "-" : s.ca2}</td>
-      ${isNurseryPrimary ? "" : `<td>${allZero ? "-" : s.ca3}</td>`}
-      <td>${allZero ? "-" : s.exam_score}</td>
-      <td>${allZero ? "-" : total}</td>
+    subjRows += `<tr>
+      <td>${subjNo}</td>
+      <td style="text-align:left">${s.subjects.name}</td>
+      <td>${displayScore(s.ca1)}</td>
+      <td>${displayScore(s.ca2)}</td>
+      ${isNurseryPrimary ? "" : `<td>${displayScore(s.ca3)}</td>`}
+      <td>${displayScore(s.exam_score)}</td>
+      <td>${anyEntered ? total : ""}</td>
       <td>${grade}</td>
-      <td>${allZero ? "ABSENT" : subjPos}</td>
+      <td>${anyEntered ? posLabel : "—"}</td>
+      <td>${anyEntered ? gradeFor(total).remark.split(",")[0] : "ABSENT"}</td>
     </tr>`;
   }
 
   const avg = summary?.average ?? 0;
   const gr = gradeFor(avg);
-  const annualBox = term?.name === "Third Term" && summary?.annual_average != null ? `
-    <div class="rc-grade-box"><table>
-      <tr><th colspan="2">Annual Summary</th></tr>
-      <tr><td>Annual Average</td><td>${summary.annual_average}</td></tr>
-      <tr><td>Annual Position</td><td>${summary.annual_position_label || "—"}</td></tr>
-    </table></div>` : "";
+  const s3Head = isNurseryPrimary ? "" : `<th>3rd CA (10)</th>`;
+  const termLower = (term?.name || "").toLowerCase();
+  const isThirdTerm = termLower.includes("third");
 
-  return `<div class="card">
-    <div class="school-title">
-      <h2>${settings.school_name || "Pariya School"}</h2>
-      <div class="contact-info">${settings.address || ""} ${settings.primary_website ? "· " + settings.primary_website : ""}</div>
+  const gradingHtml = `
+    <table>
+      <thead><tr><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th></tr></thead>
+      <tbody><tr><td>70-100</td><td>60-69</td><td>50-59</td><td>45-49</td><td>40-44</td><td>0-39</td></tr></tbody>
+    </table>`;
+
+  let lowerLeftHtml = `<div class="grading-box">${gradingHtml}</div>`;
+  let remarkText = gr.remark;
+  const summaryTitle = isThirdTerm ? "Third Term Summary" : "Term Summary";
+
+  if (isThirdTerm && summary?.annual_average != null) {
+    const { data: session } = await sb.from("sessions").select("id").eq("label", term?.sessions?.label || settings.current_session).maybeSingle();
+    const { data: siblingTerms } = await sb.from("terms").select("id, name").eq("session_id", session?.id || term?.session_id);
+    const firstTermId = siblingTerms?.find(t => t.name === "First Term")?.id;
+    const secondTermId = siblingTerms?.find(t => t.name === "Second Term")?.id;
+    const [{ data: firstSummary }, { data: secondSummary }] = await Promise.all([
+      firstTermId ? sb.from("student_term_summary").select("average").eq("student_id", studentId).eq("term_id", firstTermId).maybeSingle() : { data: null },
+      secondTermId ? sb.from("student_term_summary").select("average").eq("student_id", studentId).eq("term_id", secondTermId).maybeSingle() : { data: null },
+    ]);
+    const fmtAvg = v => (v === null || v === undefined ? "—" : v + "%");
+    const annualGrade = gradeFor(summary.annual_average).grade;
+    lowerLeftHtml = `
+      <div class="annual-summary-box">
+        <div class="ann-title">★ Annual Summary ★</div>
+        <table>
+          <thead><tr><th>1st Avg</th><th>2nd Avg</th><th>3rd Avg</th><th>Ann. Avg</th><th>Grade</th><th>Pos</th></tr></thead>
+          <tbody><tr>
+            <td>${fmtAvg(firstSummary?.average)}</td>
+            <td>${fmtAvg(secondSummary?.average)}</td>
+            <td>${avg}%</td>
+            <td><strong>${summary.annual_average}%</strong></td>
+            <td><strong>${annualGrade}</strong></td>
+            <td>${summary.annual_position_label || "—"}</td>
+          </tr></tbody>
+        </table>
+      </div>`;
+    remarkText = getAnnualRemark(annualGrade);
+  }
+
+  return `<div class="card ${catClass}" id="rc-card-${studentId}">
+    <div class="card-top">
+      <div class="logo-container">${schoolLogoHtml}</div>
+      <div class="school-title">
+        <h2>${settings.school_name || "Pariya School"}</h2>
+        <p><strong style="color:var(--accent)">Motto:</strong> ${settings.motto || ""}</p>
+        <p class="muted"><strong style="color:var(--accent)">Address:</strong> ${settings.address || ""}</p>
+        <div class="contact-info">
+          <strong>Website:</strong> <a href="${website}" target="_blank" style="color:inherit;text-decoration:none;">${website}</a>
+        </div>
+      </div>
+      <div class="logo-container">${secondaryLogoHtml}</div>
     </div>
+
+    <hr class="info-separator">
+
     <div class="student-header">
-      <div class="name-block">${student.full_name} <small>(${student.admission_no})</small></div>
-      <div class="report-term">${term?.name || ""} — ${term?.sessions?.label || settings.current_session || ""}</div>
-      <div class="session-info">${student.classes.name}</div>
+      <span class="name-block"><strong>Student:</strong> ${student.full_name}</span>
+      <span class="report-term">${(term?.name || "").toUpperCase()} REPORT CARD</span>
+      <span class="session-info">Session: ${term?.sessions?.label || settings.current_session || ""}</span>
     </div>
-    <table class="rc-table">
-      <thead><tr><th>Subject</th><th>CA1</th><th>CA2</th>${isNurseryPrimary ? "" : "<th>CA3</th>"}<th>Exam</th><th>Total</th><th>Grade</th><th>Position</th></tr></thead>
-      <tbody>${rows}</tbody>
+
+    <table class="info-table">
+      <tr>
+        <td><strong>Admission:</strong> <span class="data">${student.admission_no || "-"}</span></td>
+        <td><strong>Term:</strong> <span class="data">${term?.name || ""}</span></td>
+        <td><strong>Resumption Date:</strong> <span class="data">${term?.resumption_date || "—"}</span></td>
+      </tr>
+      <tr>
+        <td><strong>Gender:</strong> <span class="data">${student.gender || "-"}</span></td>
+        <td><strong>Total in Class:</strong> <span class="data">${totalInClass ?? "—"}</span></td>
+        <td><strong>Closing Date:</strong> <span class="data">${term?.closing_date || "—"}</span></td>
+      </tr>
+      <tr>
+        <td><strong>Class:</strong> <span class="data">${student.classes.name}</span></td>
+        <td><strong>Date Of Birth:</strong> <span class="data">${formatDobWithAge(student.date_of_birth)}</span></td>
+        <td><strong>Holidays Duration:</strong> <span class="data">${calcHolidaysDuration(term?.resumption_date, term?.closing_date)}</span></td>
+      </tr>
     </table>
-    <div class="rc-grade-box">
+
+    <div class="card-subjects">
       <table>
-        <tr><th colspan="2">Term Summary</th></tr>
-        <tr><td>Total Marks</td><td>${summary?.total_marks ?? "—"}</td></tr>
-        <tr><td>Average</td><td>${avg}</td></tr>
-        <tr><td>Grade</td><td>${gr.grade}</td></tr>
-        <tr><td>Class Position</td><td>${summary?.class_position_label ?? "—"}</td></tr>
+        <thead>
+          <tr>
+            <th>No</th><th style="text-align:left">Subject</th>
+            <th>1st CA (${isNurseryPrimary?20:10})</th><th>2nd CA (${isNurseryPrimary?20:10})</th>
+            ${s3Head}
+            <th>Exam (${isNurseryPrimary?60:70})</th><th>Total</th><th>Grade</th><th>Position</th><th>Remark</th>
+          </tr>
+        </thead>
+        <tbody>${subjRows}</tbody>
       </table>
-      <table>
-        <tr><th colspan="2">Grading Scale</th></tr>
-        <tr><td>70-100</td><td>A - Excellent</td></tr>
-        <tr><td>60-69</td><td>B - Very Good</td></tr>
-        <tr><td>50-59</td><td>C - Good</td></tr>
-        <tr><td>45-49</td><td>D - Fair</td></tr>
-        <tr><td>40-44</td><td>E - Pass</td></tr>
-        <tr><td>0-39</td><td>F - Fail</td></tr>
-      </table>
-      ${annualBox}
     </div>
-    <div class="rc-remark">Remark: ${gr.remark}</div>
-    <div class="rc-sig">
-      <div>${adminSig ? `<img src="${adminSig}" style="height:36px;"/>` : ""}<div class="sig-line">${adminName}<br/>Admin Officer</div></div>
-      <div>${signatorySig ? `<img src="${signatorySig}" style="height:36px;"/>` : ""}<div class="sig-line">${signatoryName}<br/>${wantPosition}</div></div>
+
+    <div class="lower-row">
+      ${lowerLeftHtml}
+      <div class="total-summary">
+        <div class="summary-title">${summaryTitle}</div>
+        <table>
+          <thead><tr><th>Total Marks</th><th>Average</th><th>Grade</th><th>Position</th></tr></thead>
+          <tbody><tr>
+            <td>${summary?.total_marks ?? "—"}</td>
+            <td>${avg}</td>
+            <td>${gr.grade}</td>
+            <td><span class="pos-plain">${summary?.class_position_label || "—"}</span></td>
+          </tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="remarks"><strong>${isThirdTerm ? "Annual Remark:" : "Teacher's Remark:"}</strong> ${remarkText}</div>
+
+    <div class="bottom-row">
+      <div class="signature-block">
+        ${adminOfficerSigHtml}
+        <div class="sig-line"></div>
+        <div style="font-weight:900;text-align:center;">${adminOfficerName}</div>
+        <div class="sig-caption">Admin Officer</div>
+      </div>
+      <div class="qr-wrap" style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+        <div id="qrcode-${studentId}" class="qr-code-container"></div>
+        <div style="font-size:9px;font-weight:800;color:var(--dash-muted);margin-top:2px;">VERIFY REPORT</div>
+      </div>
+      <div class="signature-block">
+        ${authoritySigHtml}
+        <div class="sig-line"></div>
+        <div style="font-weight:900;text-align:center;">${authorityName}</div>
+        <div class="sig-caption">${wantPosition}</div>
+      </div>
     </div>
   </div>`;
+}
+
+async function renderReportCardQr(studentId) {
+  const container = document.getElementById(`qrcode-${studentId}`);
+  if (!container || typeof QRCode === "undefined") return;
+  const { data: student } = await sb.from("students").select("full_name, class_id, classes(name)").eq("id", studentId).single();
+  const { data: summary } = await sb.from("student_term_summary").select("*").eq("student_id", studentId).eq("term_id", state.currentTermId).maybeSingle();
+  const settings = state.schoolSettings;
+  const qrText = `SCHOOL: ${settings.school_name || ""}\nSTUDENT: ${student?.full_name || ""}\nCLASS: ${student?.classes?.name || ""}\n` +
+    `TOTAL: ${summary?.total_marks ?? ""}\nAVG: ${summary?.average ?? ""}%\nPOS: ${summary?.class_position_label || ""}\n` +
+    `SESSION: ${settings.current_session || ""}\nDATE: ${new Date().toLocaleDateString()}`;
+  container.innerHTML = "";
+  new QRCode(container, { text: qrText, width: 100, height: 100, colorDark: "#000000", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
 }
 
 function gradeFor(avg) {
@@ -456,4 +622,5 @@ async function loadMyReport(termId) {
     <div class="no-print" style="text-align:center;margin-top:16px;">
       <button class="btn btn-green" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / Download</button>
     </div>`;
+  renderReportCardQr(state.student.id);
 }
