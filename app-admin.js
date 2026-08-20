@@ -261,9 +261,28 @@ async function renderSettings() {
     html += `<div class="settings-card">
       <div class="settings-card-title">School Profile</div>
       <div class="field"><label>School Name</label><input id="setSchoolName" value="${s.school_name||""}"/></div>
+      <div class="field"><label>Motto</label><input id="setMotto" value="${s.motto||""}"/></div>
       <div class="field"><label>Address</label><input id="setAddress" value="${s.address||""}"/></div>
       <div class="field"><label>Current Session</label><input id="setSession" value="${s.current_session||""}"/></div>
+      <div class="field"><label>Primary Website</label><input id="setPrimaryWebsite" value="${s.primary_website||""}" placeholder="https://..."/></div>
+      <div class="field"><label>Secondary Website</label><input id="setSecondaryWebsite" value="${s.secondary_website||""}" placeholder="https://..."/></div>
+      <div class="field"><label>School Logo — paste direct image link (e.g. from postimages.org)</label>
+        <input id="setSchoolLogo" value="${s.school_logo_url||""}" placeholder="https://i.postimg.cc/..."/>
+        ${s.school_logo_url ? `<img src="${s.school_logo_url}" style="height:50px;margin-top:6px;border-radius:6px;" onerror="this.style.display='none'"/>` : ""}
+      </div>
+      <div class="field"><label>Jibwis / Secondary Logo — paste direct image link</label>
+        <input id="setSecondaryLogo" value="${s.secondary_logo_url||""}" placeholder="https://i.postimg.cc/..."/>
+        ${s.secondary_logo_url ? `<img src="${s.secondary_logo_url}" style="height:50px;margin-top:6px;border-radius:6px;" onerror="this.style.display='none'"/>` : ""}
+      </div>
+      <p style="font-size:11px;color:var(--dash-muted);margin-top:-6px;">On postimages.org, use the "Direct link" URL (ends in .jpg/.png), not the page link.</p>
       <button class="btn btn-green" onclick="saveSchoolSettings()">Save</button>
+    </div>
+    <div class="settings-card">
+      <div class="settings-card-title">Term Dates</div>
+      <p style="font-size:12px;color:var(--dash-muted);">These dates print on every report card (Resumption Date, Closing Date, and the auto-calculated Holidays Duration).</p>
+      <div class="field"><label>Term</label><select id="setDatesTerm" onchange="loadTermDatesForm()">
+        ${state.terms.map(t => `<option value="${t.id}">${t.name}</option>`).join("")}</select></div>
+      <div id="termDatesFormBody"></div>
     </div>
     <div class="settings-card">
       <div class="settings-card-title">Security PINs</div>
@@ -288,12 +307,34 @@ async function renderSettings() {
     <button class="btn btn-green" onclick="changeMyPassword()">Update Password</button>
   </div>`;
   el.innerHTML = html;
+  if (state.role === "admin") loadTermDatesForm();
+}
+async function loadTermDatesForm() {
+  const termId = document.getElementById("setDatesTerm").value;
+  const term = state.terms.find(t => t.id === termId);
+  document.getElementById("termDatesFormBody").innerHTML = `
+    <div class="field"><label>Resumption Date</label><input id="setResumptionDate" type="date" value="${term?.resumption_date||""}"/></div>
+    <div class="field"><label>Closing Date</label><input id="setClosingDate" type="date" value="${term?.closing_date||""}"/></div>
+    <button class="btn btn-green" onclick="saveTermDates('${termId}')">Save Term Dates</button>`;
+}
+async function saveTermDates(termId) {
+  const resumption_date = document.getElementById("setResumptionDate").value || null;
+  const closing_date = document.getElementById("setClosingDate").value || null;
+  const { error } = await sb.from("terms").update({ resumption_date, closing_date }).eq("id", termId);
+  if (error) { alert(error.message); return; }
+  alert("Term dates saved.");
+  await loadReferenceData();
 }
 async function saveSchoolSettings() {
   const payload = {
     school_name: document.getElementById("setSchoolName").value,
+    motto: document.getElementById("setMotto").value,
     address: document.getElementById("setAddress").value,
     current_session: document.getElementById("setSession").value,
+    primary_website: document.getElementById("setPrimaryWebsite").value,
+    secondary_website: document.getElementById("setSecondaryWebsite").value,
+    school_logo_url: document.getElementById("setSchoolLogo").value,
+    secondary_logo_url: document.getElementById("setSecondaryLogo").value,
     updated_at: new Date().toISOString(),
   };
   const { error } = await sb.from("school_settings").update(payload).eq("id", true);

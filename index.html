@@ -229,6 +229,15 @@ table.data-table td.name-cell { text-align:left; font-weight:700; }
   .bottom-row { border-top:1px solid rgba(0,0,0,0.3) !important; padding-top:8px !important; }
   .no-print { display:none !important; }
 }
+
+/* Global print lockdown: no matter what's on screen, printing
+   should only ever show actual report cards — never the sidebar,
+   topbar, or any dashboard chrome bleeding onto the page. */
+@media print {
+  .sidebar, .sidebar-overlay, .topbar { display:none !important; }
+  .main-area { margin-left:0 !important; padding:0 !important; }
+  body { background:#fff !important; }
+}
 </style>
 </head>
 <body>

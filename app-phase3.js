@@ -159,7 +159,7 @@ async function loadScoreControlPanel() {
   }).join("");
 }
 async function togglePeriodWindow(termId, period, openIt) {
-  const payload = { term_id: termId, period, is_open: openIt, updated_at: new Date().toISOString() };
+  const payload = { term_id: termId, period, is_open: openIt };
   if (openIt) { payload.opened_by = state.staff.id; payload.opened_at = new Date().toISOString(); }
   else { payload.closed_at = new Date().toISOString(); }
   const { error } = await sb.from("term_period_windows").upsert(payload, { onConflict: "term_id,period" });

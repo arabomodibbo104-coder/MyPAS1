@@ -11,10 +11,11 @@ const NAV_BY_ROLE = {
     ["fees","fa-money-bill","Fees"], ["websites","fa-globe","School Websites"],
     ["importTool","fa-file-import","Bulk Import"], ["classManagement","fa-school","Manage Classes"],
     ["transferStudents","fa-people-arrows","Transfer Students"], ["scoreControl","fa-lock","Score Control"],
+    ["printReports","fa-print","Print Report Cards"],
     ["settings","fa-gear","Settings"],
   ],
-  headmaster: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["settings","fa-gear","My Profile"]],
-  principal: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["settings","fa-gear","My Profile"]],
+  headmaster: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["settings","fa-gear","My Profile"]],
+  principal: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["settings","fa-gear","My Profile"]],
   bursar: [["fees","fa-money-bill","Fees"], ["settings","fa-gear","My Profile"]],
   teacher: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","My Classes"], ["masterlist","fa-list","Master List"], ["settings","fa-gear","My Profile"]],
   student: [["myReport","fa-file-lines","My Report Card"], ["settings","fa-gear","My Profile"]],
@@ -23,6 +24,7 @@ const TAB_TITLES = { dashboard:"Dashboard", classes:"Classes & Scores", masterli
   staffDirectory:"Staff Directory", students:"Students", timetable:"Timetable", certificates:"Certificates & Awards",
   analytics:"Analytics", catracker:"CA Tracker", fees:"Fees", websites:"School Websites", importTool:"Bulk Import",
   classManagement:"Manage Classes", transferStudents:"Transfer Students", scoreControl:"Score Control",
+  printReports:"Print Report Cards",
   settings:"Settings", myReport:"My Report Card" };
 
 function buildSidebar() {
@@ -43,7 +45,8 @@ function switchTab(id) {
     staffDirectory: renderStaffDirectory, students: renderStudents, fees: renderFees, settings: renderSettings, myReport: renderMyReport,
     assignments: renderAssignments, timetable: renderTimetable, certificates: renderCertificates,
     analytics: renderAnalytics, catracker: renderCaTracker, websites: renderWebsites, importTool: renderImportTool,
-    classManagement: renderClassManagement, transferStudents: renderTransferStudents, scoreControl: renderScoreControl };
+    classManagement: renderClassManagement, transferStudents: renderTransferStudents, scoreControl: renderScoreControl,
+    printReports: renderPrintReports };
   (renderers[id] || (() => { document.getElementById(`panel-${id}`).innerHTML = "Coming soon."; }))();
 }
 
@@ -593,6 +596,61 @@ function gradeFor(avg) {
 // ============================================================
 // STUDENT PORTAL: MY REPORT
 // ============================================================
+async function renderPrintReports() {
+  const el = document.getElementById("panel-printReports");
+  let myClasses = state.classes;
+  if (state.role === "headmaster") myClasses = state.classes.filter(c => c.category === "nursery" || c.category === "primary");
+  else if (state.role === "principal") myClasses = state.classes.filter(c => c.category === "jss" || c.category === "ss");
+  el.innerHTML = `
+    <div class="settings-card">
+      <div class="settings-card-title">Print All Report Cards — One Class, One Term</div>
+      <p style="font-size:12px;color:var(--dash-muted);">Loads every active student's report card for the class + term below, one per printed page, then opens the print dialog. Nothing else on the page will print — just the report cards.</p>
+      <div class="field"><label>Class</label><select id="prClassSelect">
+        <option value="">— choose —</option>
+        ${myClasses.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+      <div class="field"><label>Term</label><select id="prTermSelect">
+        ${state.terms.map(t => `<option value="${t.id}" ${t.id===state.currentTermId?"selected":""}>${t.name}</option>`).join("")}</select></div>
+      <button class="btn btn-green" onclick="loadBulkReportCards()"><i class="fa-solid fa-file-lines"></i> Load Report Cards</button>
+    </div>
+    <div id="prStatus" style="margin:10px 0;color:var(--dash-muted);font-size:13px;"></div>
+    <div id="prPrintBtnHost" class="no-print"></div>
+    <div id="prBulkHost"></div>`;
+}
+
+async function loadBulkReportCards() {
+  const classId = document.getElementById("prClassSelect").value;
+  const termId = document.getElementById("prTermSelect").value;
+  const status = document.getElementById("prStatus");
+  const host = document.getElementById("prBulkHost");
+  const btnHost = document.getElementById("prPrintBtnHost");
+  if (!classId) { alert("Choose a class."); return; }
+  host.innerHTML = "";
+  btnHost.innerHTML = "";
+  status.textContent = "Loading students…";
+
+  const { data: students } = await sb.from("students").select("id, full_name").eq("class_id", classId).eq("is_active", true).order("full_name");
+  if (!students || !students.length) { status.textContent = "No active students in this class."; return; }
+
+  let cardsHtml = "";
+  for (let i = 0; i < students.length; i++) {
+    status.textContent = `Building report card ${i + 1} of ${students.length}…`;
+    cardsHtml += await buildReportCardHtml(students[i].id, termId);
+  }
+  host.innerHTML = cardsHtml;
+  status.textContent = `${students.length} report card(s) ready.`;
+
+  // QR codes render after the HTML is in the DOM (must not touch
+  // host.innerHTML again after this, since re-serializing would
+  // wipe the QR canvases — that's why the print button lives in
+  // its own separate element instead of being appended here).
+  for (const s of students) {
+    await renderReportCardQr(s.id);
+  }
+
+  btnHost.innerHTML = `<div style="text-align:center;margin:16px 0;">
+    <button class="btn btn-green" onclick="window.print()"><i class="fa-solid fa-print"></i> Print All ${students.length} Report Cards</button>
+  </div>`;
+}
 async function renderMyReport() {
   const el = document.getElementById("panel-myReport");
   el.innerHTML = `<div class="term-pills" id="myTermPills"></div><div id="myReportHost"></div>`;
