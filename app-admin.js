@@ -205,13 +205,54 @@ async function deactivateStudent(id) {
 // ============================================================
 async function renderFees() {
   const el = document.getElementById("panel-fees");
-  el.innerHTML = `<div class="field"><label>Select Class</label>
-    <select id="feeClassSelect" onchange="loadFeesGrid()"><option value="">— choose —</option>
-    ${state.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+  el.innerHTML = `
+    <div class="settings-card">
+      <div class="settings-card-title">Fees Overview — Whole School</div>
+      <div class="field"><label>Term</label><select id="feeOverviewTerm" onchange="loadFeesOverview()">
+        ${state.terms.map(t => `<option value="${t.id}" ${t.id===state.currentTermId?"selected":""}>${t.name}</option>`).join("")}</select></div>
+      <div id="feeOverviewBody">Loading…</div>
+    </div>
+    <div class="field"><label>Select Class</label>
+      <select id="feeClassSelect" onchange="loadFeesGrid()"><option value="">— choose —</option>
+      ${state.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
     <div class="field"><label>Term</label><select id="feeTermSelect" onchange="loadFeesGrid()">
     ${state.terms.map(t => `<option value="${t.id}" ${t.id===state.currentTermId?"selected":""}>${t.name}</option>`).join("")}</select></div>
     <div id="feeGrid"></div>`;
+  await loadFeesOverview();
 }
+
+async function loadFeesOverview() {
+  const termId = document.getElementById("feeOverviewTerm").value;
+  const body = document.getElementById("feeOverviewBody");
+  body.innerHTML = "Loading…";
+
+  const [{ data: structure }, { data: students }, { data: payments }] = await Promise.all([
+    sb.from("fee_structure").select("category, expected_amount"),
+    sb.from("students").select("id, class_id, classes(category)").eq("is_active", true),
+    sb.from("fee_payments").select("student_id, amount_paid, is_paid_override").eq("term_id", termId),
+  ]);
+  const expectedByCategory = {}; (structure||[]).forEach(s => expectedByCategory[s.category] = s.expected_amount);
+  const payMap = {}; (payments||[]).forEach(p => payMap[p.student_id] = p);
+
+  let totalCollected = 0, totalOutstandingAmount = 0, paidCount = 0, unpaidCount = 0;
+  (students||[]).forEach(stu => {
+    const expected = expectedByCategory[stu.classes?.category] || 0;
+    const pay = payMap[stu.id];
+    const paidAmt = pay?.amount_paid || 0;
+    const isPaid = pay?.is_paid_override === true ? true : pay?.is_paid_override === false ? false : paidAmt >= expected;
+    totalCollected += paidAmt;
+    if (isPaid) paidCount++;
+    else { unpaidCount++; totalOutstandingAmount += Math.max(expected - paidAmt, 0); }
+  });
+
+  body.innerHTML = `<div class="card-grid">
+    ${statCard("fa-money-bill-trend-up", "₦" + totalCollected.toLocaleString(), "Total Collected")}
+    ${statCard("fa-triangle-exclamation", "₦" + totalOutstandingAmount.toLocaleString(), "Total Outstanding")}
+    ${statCard("fa-circle-check", paidCount, "Students Fully Paid")}
+    ${statCard("fa-circle-xmark", unpaidCount, "Students Owing")}
+  </div>`;
+}
+
 async function loadFeesGrid() {
   const classId = document.getElementById("feeClassSelect").value;
   const termId = document.getElementById("feeTermSelect").value;
@@ -247,7 +288,7 @@ async function saveFeeRow(studentId, classId, termId) {
     student_id: studentId, class_id: classId, term_id: termId, amount_paid, is_paid_override,
     updated_by: state.staff ? state.staff.id : null,
   }, { onConflict: "student_id,term_id" });
-  if (error) alert(error.message); else alert("Saved.");
+  if (error) alert(error.message); else { alert("Saved."); loadFeesOverview(); }
 }
 
 // ============================================================

@@ -261,14 +261,16 @@ async function openRequestUnlockModal(subjectId, subjectName, period) {
     <button class="btn btn-green" style="width:100%;" onclick="submitUnlockRequest('${subjectId}','${period}')">Send Request to Admin</button>`);
 }
 async function submitUnlockRequest(subjectId, period) {
+  const btn = event.target;
   const studentIds = [...document.querySelectorAll(".unlockStuCheck:checked")].map(c => c.value);
   const reason = document.getElementById("unlockReason").value.trim();
   if (!studentIds.length) { alert("Select at least one student."); return; }
+  btn.disabled = true; btn.textContent = "Sending…";
   const { error } = await sb.from("score_unlock_requests").insert({
     class_id: state.currentClass.id, subject_id: subjectId, term_id: state.currentTermId, period,
     staff_id: state.staff.id, student_ids: studentIds, reason,
   });
-  if (error) { alert(error.message); return; }
+  if (error) { alert(error.message); btn.disabled = false; btn.textContent = "Send Request to Admin"; return; }
   closeModal();
   alert("Request sent. The subject stays locked until admin approves.");
 }
@@ -611,9 +613,9 @@ async function renderPrintReports() {
       <div class="field"><label>Term</label><select id="prTermSelect">
         ${state.terms.map(t => `<option value="${t.id}" ${t.id===state.currentTermId?"selected":""}>${t.name}</option>`).join("")}</select></div>
       <button class="btn btn-green" onclick="loadBulkReportCards()"><i class="fa-solid fa-file-lines"></i> Load Report Cards</button>
+      <button class="btn no-print" id="prPrintBtnTop" disabled onclick="window.print()"><i class="fa-solid fa-print"></i> Print All (load first)</button>
     </div>
     <div id="prStatus" style="margin:10px 0;color:var(--dash-muted);font-size:13px;"></div>
-    <div id="prPrintBtnHost" class="no-print"></div>
     <div id="prBulkHost"></div>`;
 }
 
@@ -622,10 +624,10 @@ async function loadBulkReportCards() {
   const termId = document.getElementById("prTermSelect").value;
   const status = document.getElementById("prStatus");
   const host = document.getElementById("prBulkHost");
-  const btnHost = document.getElementById("prPrintBtnHost");
+  const printBtn = document.getElementById("prPrintBtnTop");
   if (!classId) { alert("Choose a class."); return; }
   host.innerHTML = "";
-  btnHost.innerHTML = "";
+  printBtn.disabled = true; printBtn.classList.remove("btn-green"); printBtn.textContent = "Print All (load first)";
   status.textContent = "Loading students…";
 
   const { data: students } = await sb.from("students").select("id, full_name").eq("class_id", classId).eq("is_active", true).order("full_name");
@@ -641,15 +643,14 @@ async function loadBulkReportCards() {
 
   // QR codes render after the HTML is in the DOM (must not touch
   // host.innerHTML again after this, since re-serializing would
-  // wipe the QR canvases — that's why the print button lives in
-  // its own separate element instead of being appended here).
+  // wipe the QR canvases).
   for (const s of students) {
     await renderReportCardQr(s.id);
   }
 
-  btnHost.innerHTML = `<div style="text-align:center;margin:16px 0;">
-    <button class="btn btn-green" onclick="window.print()"><i class="fa-solid fa-print"></i> Print All ${students.length} Report Cards</button>
-  </div>`;
+  printBtn.disabled = false;
+  printBtn.classList.add("btn-green");
+  printBtn.innerHTML = `<i class="fa-solid fa-print"></i> Print All ${students.length} Report Cards`;
 }
 async function renderMyReport() {
   const el = document.getElementById("panel-myReport");

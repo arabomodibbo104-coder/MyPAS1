@@ -185,7 +185,15 @@ async function loadUnlockRequests() {
     </div>`).join("");
 }
 async function resolveRequest(id, approve) {
-  const { error } = await sb.rpc("resolve_unlock_request", { p_request_id: id, p_approve: approve });
+  const { data, error } = await sb.rpc("resolve_unlock_request", { p_request_id: id, p_approve: approve });
   if (error) { alert(error.message); return; }
+  if (approve) {
+    const r = data && data[0];
+    if (r && r.skipped_count > 0) {
+      alert(`Approved for ${r.approved_count} student(s). ${r.skipped_count} student(s) already had a score for this period and were skipped — only you can edit an already-scored student directly.`);
+    } else if (r) {
+      alert(`Approved for ${r.approved_count} student(s).`);
+    }
+  }
   loadUnlockRequests();
 }
