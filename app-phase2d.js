@@ -45,7 +45,7 @@ async function deleteWebsiteEntry(id) {
 // BULK IMPORT — one-time migration tool for existing Google
 // Sheets data (students & staff). Paste CSV, preview, then
 // import. Expected headers (case-insensitive):
-//   Students: admission_no, full_name, class_name, gender, date_of_birth, guardian_name, guardian_phone
+//   Students: admission_no, full_name, class_name, gender, date_of_birth, guardian_name, guardian_phone, password (optional — falls back to school default)
 //   Staff:    staff_code, full_name, phone, email, positions (semicolon-separated), password
 // ============================================================
 async function renderImportTool() {
@@ -53,7 +53,7 @@ async function renderImportTool() {
   el.innerHTML = `
     <div class="settings-card">
       <div class="settings-card-title">Import Students</div>
-      <p style="font-size:12px;color:var(--dash-muted);">CSV headers: admission_no, full_name, class_name, gender, date_of_birth (YYYY-MM-DD), guardian_name, guardian_phone</p>
+      <p style="font-size:12px;color:var(--dash-muted);">CSV headers: admission_no, full_name, class_name, gender, date_of_birth (YYYY-MM-DD), guardian_name, guardian_phone, password (optional — leave blank to use the school default password)</p>
       <textarea id="importStudentsCsv" rows="8" style="width:100%;background:var(--dash-surface);color:var(--dash-text);border:1px solid var(--dash-border);border-radius:8px;padding:10px;font-family:monospace;font-size:12px;" placeholder="admission_no,full_name,class_name,gender,date_of_birth,guardian_name,guardian_phone
 P3-001,Aisha Bello,Primary 3,Female,2016-04-12,Mr Bello,08012345678"></textarea>
       <div style="display:flex;gap:8px;margin-top:10px;">
@@ -109,12 +109,19 @@ async function runImport(kind) {
     for (const r of rows) {
       const cls = state.classes.find(c => c.name.toLowerCase() === (r.class_name||"").toLowerCase());
       if (!r.admission_no || !r.full_name) { failed++; errors.push(`Missing admission_no/full_name for row: ${JSON.stringify(r)}`); continue; }
-      const { error } = await sb.from("students").insert({
+      const { data: newStudent, error } = await sb.from("students").insert({
         admission_no: r.admission_no, full_name: r.full_name, class_id: cls ? cls.id : null,
         gender: r.gender || null, date_of_birth: r.date_of_birth || null,
         guardian_name: r.guardian_name || null, guardian_phone: r.guardian_phone || null,
-      });
-      if (error) { failed++; errors.push(`${r.admission_no}: ${error.message}`); } else success++;
+      }).select().single();
+      if (error) { failed++; errors.push(`${r.admission_no}: ${error.message}`); continue; }
+      // Always provision a real login account, using the row's own
+      // password column if given, otherwise the current school
+      // default — without this, imported students silently have no
+      // way to sign in at all.
+      const effectivePassword = r.password || state.schoolSettings.student_default_password || "student123";
+      await provisionAuthAccount("student", newStudent.id, newStudent.admission_no, effectivePassword);
+      success++;
     }
   } else {
     for (const r of rows) {

@@ -37,9 +37,52 @@ async function loadMasterList(classId) {
 async function renderStaffDirectory() {
   if (state.role !== "admin") { document.getElementById("panel-staffDirectory").innerHTML = "Admins only."; return; }
   const el = document.getElementById("panel-staffDirectory");
-  el.innerHTML = `<button class="btn btn-green" onclick="openStaffForm()"><i class="fa-solid fa-plus"></i> Add Staff</button>
+  el.innerHTML = `
+    <div class="settings-card">
+      <div class="settings-card-title">Bulk Reset — Teachers Only</div>
+      <p style="font-size:12px;color:var(--dash-muted);">Applies only to staff whose sole role is Teacher — never to Admin, Headmaster, Principal, or Bursar accounts, which are always managed individually below.</p>
+      <div class="field"><label>New Teacher ID Prefix (e.g. TP000 → generates TP0001, TP0002…)</label><input id="bulkTeacherPrefix" placeholder="TP000"/></div>
+      <div class="field"><label>New Shared Password for All Teachers</label><input id="bulkTeacherIdPassword" type="password" placeholder="Required — IDs are changing, so passwords must reset too"/></div>
+      <button class="btn btn-green" onclick="bulkRenumberTeachers()">Assign New IDs + Reset Passwords</button>
+      <hr style="border-color:var(--dash-border);margin:16px 0;">
+      <div class="field"><label>Reset All Teacher Passwords (keep existing IDs)</label><input id="bulkTeacherPasswordOnly" type="password" placeholder="New shared password"/></div>
+      <button class="btn" onclick="bulkResetTeacherPasswords()">Reset Passwords Only</button>
+      <div id="bulkTeacherResult" style="margin-top:12px;font-size:12px;"></div>
+    </div>
+    <button class="btn btn-green" onclick="openStaffForm()"><i class="fa-solid fa-plus"></i> Add Staff</button>
     <div id="staffList" style="margin-top:14px;"></div>`;
   await loadStaffList();
+}
+async function bulkRenumberTeachers() {
+  const prefix = document.getElementById("bulkTeacherPrefix").value.trim();
+  const new_password = document.getElementById("bulkTeacherIdPassword").value;
+  if (!prefix || !new_password) { alert("Both the ID prefix and a new shared password are required."); return; }
+  if (!confirm(`This will change the login ID and password for EVERY teacher (not other staff roles). Continue?`)) return;
+  const result = await callBulkCredentialReset({ action: "renumber_teachers", prefix, new_password });
+  if (!result) return;
+  document.getElementById("bulkTeacherResult").innerHTML = `<strong>${result.count} teacher(s) updated.</strong><br/>` +
+    result.mapping.map(m => `${m.full_name}: ${m.old_code || "(new)"} → ${m.new_code}`).join("<br/>");
+  alert(`Done. ${result.count} teacher(s) now have new IDs and the shared password you set. Share the new IDs with them individually.`);
+  loadStaffList();
+}
+async function bulkResetTeacherPasswords() {
+  const new_password = document.getElementById("bulkTeacherPasswordOnly").value;
+  if (!new_password) { alert("Enter a new password."); return; }
+  if (!confirm("Reset the password for EVERY teacher to this same value?")) return;
+  const result = await callBulkCredentialReset({ action: "reset_teacher_passwords", new_password });
+  if (!result) return;
+  alert(`Password reset for ${result.count} teacher(s).`);
+}
+async function callBulkCredentialReset(payload) {
+  const { data: { session } } = await sb.auth.getSession();
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/bulk-credential-reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session.access_token}` },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json();
+  if (!res.ok) { alert("Failed: " + (json.error || res.statusText)); return null; }
+  return json;
 }
 async function loadStaffList() {
   const { data: staff } = await sb.from("staff").select("*").order("full_name");
@@ -58,7 +101,8 @@ function openStaffForm(staff) {
   const positions = ["Admin","Headmaster","Principal","Bursar","Admin Officer","Teacher"];
   openModal(`<h3>${staff ? "Edit" : "Add"} Staff</h3>
     <div class="field"><label>Full Name</label><input id="sfName" value="${staff?.full_name||""}"/></div>
-    <div class="field"><label>Staff ID (login)</label><input id="sfCode" value="${staff?.staff_code||""}" ${staff?"disabled":""}/></div>
+    <div class="field"><label>Staff ID (login)</label><input id="sfCode" value="${staff?.staff_code||""}" data-original="${staff?.staff_code||""}"/></div>
+    ${staff ? `<p style="font-size:11px;color:var(--dash-muted);margin-top:-8px;">Changing the Staff ID requires setting a new password below too — otherwise their account gets locked out.</p>` : ""}
     <div class="field"><label>Phone</label><input id="sfPhone" value="${staff?.phone||""}"/></div>
     <div class="field"><label>Email</label><input id="sfEmail" value="${staff?.email||""}"/></div>
     <div class="field"><label>Positions</label>
@@ -71,6 +115,7 @@ function openStaffForm(staff) {
 async function saveStaff(staffId) {
   const full_name = document.getElementById("sfName").value.trim();
   const staff_code = document.getElementById("sfCode").value.trim();
+  const originalCode = document.getElementById("sfCode").dataset.original || "";
   const phone = document.getElementById("sfPhone").value.trim();
   const email = document.getElementById("sfEmail").value.trim();
   const password = document.getElementById("sfPassword").value;
@@ -78,10 +123,12 @@ async function saveStaff(staffId) {
   const is_admin = positions.includes("Admin");
   if (!full_name || !staff_code) { alert("Name and Staff ID are required."); return; }
   if (!staffId && !password) { alert("Please set an initial password for this staff member."); return; }
+  const codeChanged = staffId && staff_code !== originalCode;
+  if (codeChanged && !password) { alert("You changed the Staff ID — please also set a new password so their login doesn't break."); return; }
 
   let row;
   if (staffId) {
-    const { data, error } = await sb.from("staff").update({ full_name, phone, email, positions, is_admin, updated_at: new Date().toISOString() }).eq("id", staffId).select().single();
+    const { data, error } = await sb.from("staff").update({ full_name, staff_code, phone, email, positions, is_admin, updated_at: new Date().toISOString() }).eq("id", staffId).select().single();
     if (error) { alert(error.message); return; }
     row = data;
   } else {
@@ -126,6 +173,17 @@ async function provisionAuthAccount(kind, table_id, login_id, password) {
 async function renderStudents() {
   const el = document.getElementById("panel-students");
   el.innerHTML = `
+    <div class="settings-card">
+      <div class="settings-card-title">Bulk Reset — All Students</div>
+      <p style="font-size:12px;color:var(--dash-muted);">Applies to every active student across all classes. Admission numbers are reassigned globally in serial order (sorted by class name, then student name) — never per-class, so two students in different classes never end up with the same number.</p>
+      <div class="field"><label>New Admission Number Prefix (e.g. SU2026000 → generates SU20260001, SU20260002…)</label><input id="bulkStudentPrefix" placeholder="SU2026000"/></div>
+      <div class="field"><label>New Shared Default Password for All Students</label><input id="bulkStudentIdPassword" type="password" placeholder="Required — IDs are changing, so passwords must reset too"/></div>
+      <button class="btn btn-green" onclick="bulkRenumberStudents()">Assign New Admission Numbers + Reset Passwords</button>
+      <hr style="border-color:var(--dash-border);margin:16px 0;">
+      <div class="field"><label>Reset All Student Passwords (keep existing admission numbers)</label><input id="bulkStudentPasswordOnly" type="password" placeholder="New shared default password"/></div>
+      <button class="btn" onclick="bulkResetStudentPasswords()">Reset Passwords Only</button>
+      <div id="bulkStudentResult" style="margin-top:12px;font-size:12px;max-height:200px;overflow-y:auto;"></div>
+    </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;">
       <div class="field" style="flex:1;min-width:180px;"><label>Filter by Class</label>
         <select id="stuFilterClass" onchange="loadStudentsList()"><option value="">All Classes</option>
@@ -134,6 +192,26 @@ async function renderStudents() {
     </div>
     <div id="studentsList" style="margin-top:14px;"></div>`;
   await loadStudentsList();
+}
+async function bulkRenumberStudents() {
+  const prefix = document.getElementById("bulkStudentPrefix").value.trim();
+  const new_default_password = document.getElementById("bulkStudentIdPassword").value;
+  if (!prefix || !new_default_password) { alert("Both the admission number prefix and a new shared password are required."); return; }
+  if (!confirm("This will change the admission number and password for EVERY active student. Continue?")) return;
+  const result = await callBulkCredentialReset({ action: "renumber_students", prefix, new_default_password });
+  if (!result) return;
+  document.getElementById("bulkStudentResult").innerHTML = `<strong>${result.count} student(s) updated.</strong><br/>` +
+    result.mapping.map(m => `${m.full_name} (${m.class||""}): ${m.old_admission_no||"(new)"} → ${m.new_admission_no}`).join("<br/>");
+  alert(`Done. ${result.count} student(s) now have new admission numbers and share the new default password. Individual passwords set earlier were cleared.`);
+  loadStudentsList();
+}
+async function bulkResetStudentPasswords() {
+  const new_default_password = document.getElementById("bulkStudentPasswordOnly").value;
+  if (!new_default_password) { alert("Enter a new password."); return; }
+  if (!confirm("Reset EVERY student to this shared password (clearing any individual passwords)?")) return;
+  const result = await callBulkCredentialReset({ action: "reset_student_passwords", new_default_password });
+  if (!result) return;
+  alert(`Password reset for ${result.count} student(s).`);
 }
 async function loadStudentsList() {
   const classId = document.getElementById("stuFilterClass")?.value;
@@ -154,7 +232,8 @@ async function loadStudentsList() {
 function openStudentForm(stu) {
   openModal(`<h3>${stu ? "Edit" : "Add"} Student</h3>
     <div class="field"><label>Full Name</label><input id="stfName" value="${stu?.full_name||""}"/></div>
-    <div class="field"><label>Admission No.</label><input id="stfAdm" value="${stu?.admission_no||""}" ${stu?"disabled":""}/></div>
+    <div class="field"><label>Admission No.</label><input id="stfAdm" value="${stu?.admission_no||""}" data-original="${stu?.admission_no||""}"/></div>
+    ${stu ? `<p style="font-size:11px;color:var(--dash-muted);margin-top:-8px;">Changing this resets their password to the current school default — tell them the default password if you change their admission number.</p>` : ""}
     <div class="field"><label>Class</label><select id="stfClass">${state.classes.map(c => `<option value="${c.id}" ${stu?.class_id===c.id?"selected":""}>${c.name}</option>`).join("")}</select></div>
     <div class="field"><label>Gender</label><select id="stfGender">
       <option ${stu?.gender==="Male"?"selected":""}>Male</option><option ${stu?.gender==="Female"?"selected":""}>Female</option></select></div>
@@ -167,6 +246,7 @@ function openStudentForm(stu) {
 async function saveStudent(studentId) {
   const full_name = document.getElementById("stfName").value.trim();
   const admission_no = document.getElementById("stfAdm").value.trim();
+  const originalAdm = document.getElementById("stfAdm").dataset.original || "";
   const class_id = document.getElementById("stfClass").value;
   const gender = document.getElementById("stfGender").value;
   const date_of_birth = document.getElementById("stfDob").value || null;
@@ -174,11 +254,17 @@ async function saveStudent(studentId) {
   const guardian_phone = document.getElementById("stfGuardianPhone").value.trim();
   const password = document.getElementById("stfPassword").value;
   if (!full_name || !admission_no) { alert("Name and Admission Number are required."); return; }
+  const admChanged = studentId && admission_no !== originalAdm;
 
   let row;
   const payload = { full_name, class_id, gender, date_of_birth, guardian_name, guardian_phone };
   if (studentId) {
-    const { data, error } = await sb.from("students").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", studentId).select().single();
+    const updatePayload = { ...payload, admission_no, updated_at: new Date().toISOString() };
+    // Changing the admission number breaks their old shadow login,
+    // so unless a new password was also given, fall back to the
+    // current school-wide default so they can still sign in.
+    if (admChanged && !password) updatePayload.password_hash = null;
+    const { data, error } = await sb.from("students").update(updatePayload).eq("id", studentId).select().single();
     if (error) { alert(error.message); return; }
     row = data;
   } else {
@@ -186,11 +272,16 @@ async function saveStudent(studentId) {
     if (error) { alert(error.message); return; }
     row = data;
   }
+  // Always provision a real login account — previously this only
+  // happened if a password was typed, silently leaving students
+  // with no auth account (and no way to log in) if admin left the
+  // password field blank to use the school default.
+  const effectivePassword = password || state.schoolSettings.student_default_password || "student123";
   if (password) {
     const password_hash_res = await sb.rpc("hash_secret", { p_plain: password });
     await sb.from("students").update({ password_hash: password_hash_res.data }).eq("id", row.id);
-    await provisionAuthAccount("student", row.id, row.admission_no, password);
   }
+  await provisionAuthAccount("student", row.id, row.admission_no, effectivePassword);
   closeModal();
   loadStudentsList();
 }
