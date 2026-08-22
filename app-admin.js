@@ -263,6 +263,14 @@ async function saveStudent(studentId) {
   if (!full_name || !admission_no) { alert("Name and Admission Number are required."); return; }
   const admChanged = studentId && admission_no !== originalAdm;
 
+  // Friendly duplicate check before hitting the DB's unique
+  // constraint, so admin sees exactly who already has this number
+  // instead of a raw constraint-violation error.
+  if (!studentId || admChanged) {
+    const { data: existing } = await sb.from("students").select("full_name").eq("admission_no", admission_no).maybeSingle();
+    if (existing) { alert(`Admission number "${admission_no}" already belongs to ${existing.full_name}. Please choose a different one.`); return; }
+  }
+
   let row;
   const payload = { full_name, class_id, gender, date_of_birth, guardian_name, guardian_phone };
   if (studentId) {
@@ -432,6 +440,17 @@ async function renderSettings() {
       <div class="field"><label>Prefix</label><input id="setAdmPrefix" value="${s.student_admission_prefix||"SU"}"/></div>
       <div class="field"><label>Next Number</label><input id="setAdmNext" type="number" value="${s.student_admission_next_number||1}"/></div>
       <button class="btn btn-green" onclick="saveAdmissionScheme()">Save</button>
+      <button class="btn" onclick="syncAdmissionScheme()" style="margin-left:8px;">Sync to Match Existing Numbers</button>
+      <div id="admSchemeInfo" style="margin-top:10px;font-size:12px;color:var(--dash-muted);"></div>
+    </div>
+    <div class="settings-card">
+      <div class="settings-card-title">Check an Admission Number</div>
+      <p style="font-size:12px;color:var(--dash-muted);">Type a number to check if it's already taken before assigning it manually.</p>
+      <div class="field" style="display:flex;gap:8px;">
+        <input id="admCheckInput" placeholder="e.g. SU20260012" style="flex:1;"/>
+        <button class="btn" onclick="checkAdmissionNumber()">Check</button>
+      </div>
+      <div id="admCheckResult" style="margin-top:8px;font-size:13px;font-weight:800;"></div>
     </div>
     <div class="settings-card">
       <div class="settings-card-title">Term Dates</div>
@@ -463,14 +482,52 @@ async function renderSettings() {
     <button class="btn btn-green" onclick="changeMyPassword()">Update Password</button>
   </div>`;
   el.innerHTML = html;
-  if (state.role === "admin") loadTermDatesForm();
+  if (state.role === "admin") { loadTermDatesForm(); loadAdmSchemeInfo(); }
 }
 async function saveAdmissionScheme() {
   const student_admission_prefix = document.getElementById("setAdmPrefix").value.trim();
   const student_admission_next_number = Number(document.getElementById("setAdmNext").value) || 1;
   if (!student_admission_prefix) { alert("Prefix is required."); return; }
   const { error } = await sb.from("school_settings").update({ student_admission_prefix, student_admission_next_number }).eq("id", true);
-  if (error) alert(error.message); else { alert("Saved."); Object.assign(state.schoolSettings, { student_admission_prefix, student_admission_next_number }); }
+  if (error) alert(error.message); else { alert("Saved."); Object.assign(state.schoolSettings, { student_admission_prefix, student_admission_next_number }); loadAdmSchemeInfo(); }
+}
+async function loadAdmSchemeInfo() {
+  const s = state.schoolSettings;
+  const prefix = s.student_admission_prefix || "SU";
+  const next = s.student_admission_next_number || 1;
+  const lastIssued = next > 1 ? prefix + String(next - 1).padStart(4, "0") : "none yet";
+  const nextNumber = prefix + String(next).padStart(4, "0");
+  const { count } = await sb.from("students").select("*", { count: "exact", head: true }).eq("is_active", true);
+  document.getElementById("admSchemeInfo").innerHTML =
+    `Last number issued by this scheme: <strong>${lastIssued}</strong> · Next will be: <strong>${nextNumber}</strong> · Total active students in school: <strong>${count ?? "—"}</strong>`;
+}
+async function syncAdmissionScheme() {
+  const prefix = document.getElementById("setAdmPrefix").value.trim() || state.schoolSettings.student_admission_prefix || "SU";
+  const { data: students } = await sb.from("students").select("admission_no").ilike("admission_no", prefix + "%");
+  let maxNum = 0;
+  (students || []).forEach(s => {
+    const suffix = s.admission_no.slice(prefix.length);
+    const num = parseInt(suffix, 10);
+    if (!isNaN(num) && num > maxNum) maxNum = num;
+  });
+  const nextNumber = maxNum + 1;
+  document.getElementById("setAdmNext").value = nextNumber;
+  const { error } = await sb.from("school_settings").update({ student_admission_prefix: prefix, student_admission_next_number: nextNumber }).eq("id", true);
+  if (error) { alert(error.message); return; }
+  Object.assign(state.schoolSettings, { student_admission_prefix: prefix, student_admission_next_number: nextNumber });
+  alert(`Synced. Found highest existing number matching "${prefix}" is ${maxNum > 0 ? prefix + String(maxNum).padStart(4,"0") : "none"} — next registration will be ${prefix}${String(nextNumber).padStart(4,"0")}.`);
+  loadAdmSchemeInfo();
+}
+async function checkAdmissionNumber() {
+  const val = document.getElementById("admCheckInput").value.trim();
+  const result = document.getElementById("admCheckResult");
+  if (!val) { result.textContent = ""; return; }
+  const { data } = await sb.from("students").select("full_name, classes(name)").eq("admission_no", val).maybeSingle();
+  if (data) {
+    result.innerHTML = `<span style="color:var(--dash-danger);">Already taken — belongs to ${data.full_name} (${data.classes?.name||"no class"}).</span>`;
+  } else {
+    result.innerHTML = `<span style="color:var(--dash-green);">Available.</span>`;
+  }
 }
 async function loadTermDatesForm() {
   const termId = document.getElementById("setDatesTerm").value;
@@ -483,8 +540,8 @@ async function loadTermDatesForm() {
 async function saveTermDates(termId) {
   const resumption_date = document.getElementById("setResumptionDate").value || null;
   const closing_date = document.getElementById("setClosingDate").value || null;
-  if (resumption_date && closing_date && new Date(closing_date) < new Date(resumption_date)) {
-    alert("Closing Date is before Resumption Date — that can't be right for the same term. Please double-check the two dates (Resumption should come first, Closing should come after) before saving. This exact mix-up is why the Holidays Duration shows blank on report cards.");
+  if (resumption_date && closing_date && new Date(resumption_date) < new Date(closing_date)) {
+    alert("Resumption Date is before Closing Date. Resumption Date here means when students resume AFTER this term's holiday, so it should come after the Closing Date. Please double-check before saving — this is why Holidays Duration would show blank otherwise.");
     return;
   }
   const { error } = await sb.from("terms").update({ resumption_date, closing_date }).eq("id", termId);

@@ -354,9 +354,9 @@ function formatDobWithAge(dobRaw) {
 }
 function calcHolidaysDuration(resumptionRaw, closingRaw) {
   if (!resumptionRaw || !closingRaw) return "—";
-  const start = new Date(resumptionRaw), end = new Date(closingRaw);
-  if (isNaN(start) || isNaN(end)) return "—";
-  const diffDays = Math.round((end - start) / 86400000);
+  const resumption = new Date(resumptionRaw), closing = new Date(closingRaw);
+  if (isNaN(resumption) || isNaN(closing)) return "—";
+  const diffDays = Math.round((resumption - closing) / 86400000);
   if (diffDays < 0) return "—";
   return `${diffDays} day${diffDays !== 1 ? "s" : ""}`;
 }
@@ -699,7 +699,16 @@ async function renderRegisterStudent() {
   const el = document.getElementById("panel-registerStudent");
   const allowedCategories = state.role === "registrar_primary" ? ["nursery","primary"] : ["jss","ss"];
   const myClasses = state.classes.filter(c => allowedCategories.includes(c.category));
+  const s = state.schoolSettings;
+  const prefix = s.student_admission_prefix || "SU";
+  const next = s.student_admission_next_number || 1;
+  const lastIssued = next > 1 ? prefix + String(next - 1).padStart(4, "0") : "none yet";
+  const nextNumber = prefix + String(next).padStart(4, "0");
   el.innerHTML = `
+    <div class="settings-card" style="background:var(--dash-green-soft);">
+      <div style="font-size:12px;">Last admission number issued: <strong id="regLastIssued">${lastIssued}</strong></div>
+      <div style="font-size:12px;">This registration will get: <strong id="regNextNumber">${nextNumber}</strong></div>
+    </div>
     <div class="settings-card">
       <div class="settings-card-title">Register New Student</div>
       <div class="field"><label>Full Name</label><input id="regStuName"/></div>
@@ -743,6 +752,17 @@ async function doRegisterStudent() {
   if (recentHost.querySelector("p")) recentHost.innerHTML = "";
   const cls = state.classes.find(c => c.id === class_id);
   recentHost.innerHTML = `<div class="settings-row"><span>${full_name} (${cls?.name||""})</span><span><strong>${row.admission_no}</strong></span></div>` + recentHost.innerHTML;
+
+  // Refresh the "last/next number" info box in place (without
+  // wiping the Recently Registered list we just built above it).
+  const { data: freshSettings } = await sb.from("school_settings").select("*").single();
+  if (freshSettings) {
+    Object.assign(state.schoolSettings, freshSettings);
+    const prefix = freshSettings.student_admission_prefix || "SU";
+    const next = freshSettings.student_admission_next_number || 1;
+    document.getElementById("regLastIssued").textContent = next > 1 ? prefix + String(next - 1).padStart(4, "0") : "none yet";
+    document.getElementById("regNextNumber").textContent = prefix + String(next).padStart(4, "0");
+  }
 
   document.getElementById("regStuName").value = "";
   document.getElementById("regStuDob").value = "";
