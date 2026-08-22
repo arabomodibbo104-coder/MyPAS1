@@ -483,6 +483,10 @@ async function loadTermDatesForm() {
 async function saveTermDates(termId) {
   const resumption_date = document.getElementById("setResumptionDate").value || null;
   const closing_date = document.getElementById("setClosingDate").value || null;
+  if (resumption_date && closing_date && new Date(closing_date) < new Date(resumption_date)) {
+    alert("Closing Date is before Resumption Date — that can't be right for the same term. Please double-check the two dates (Resumption should come first, Closing should come after) before saving. This exact mix-up is why the Holidays Duration shows blank on report cards.");
+    return;
+  }
   const { error } = await sb.from("terms").update({ resumption_date, closing_date }).eq("id", termId);
   if (error) { alert(error.message); return; }
   alert("Term dates saved.");
