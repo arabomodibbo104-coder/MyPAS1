@@ -8,6 +8,10 @@ async function renderMasterList() {
     const { data: assigns } = await sb.from("class_teacher_subjects").select("class_id").eq("staff_id", state.staff.id);
     const ids = new Set((assigns || []).map(a => a.class_id));
     myClasses = state.classes.filter(c => ids.has(c.id));
+  } else if (state.role === "registrar_primary") {
+    myClasses = state.classes.filter(c => c.category === "nursery" || c.category === "primary");
+  } else if (state.role === "registrar_secondary") {
+    myClasses = state.classes.filter(c => c.category === "jss" || c.category === "ss");
   }
   el.innerHTML = `<div class="field"><label>Select Class</label>
     <select id="mlClassSelect" onchange="loadMasterList(this.value)">
@@ -20,13 +24,16 @@ async function loadMasterList(classId) {
   const body = document.getElementById("mlBody");
   if (!classId) { body.innerHTML = ""; return; }
   body.innerHTML = "Loading…";
-  const { data: students } = await sb.from("students").select("admission_no, full_name, gender, date_of_birth, guardian_name, guardian_phone")
+  const isRegistrar = state.role === "registrar_primary" || state.role === "registrar_secondary";
+  const { data: students } = await sb.from("students")
+    .select("admission_no, full_name, gender, date_of_birth, guardian_name, guardian_phone, staff:registered_by(full_name)")
     .eq("class_id", classId).eq("is_active", true).order("full_name");
   body.innerHTML = `<div style="overflow-x:auto;"><table class="data-table">
-    <thead><tr><th>#</th><th>Adm No</th><th>Name</th><th>Gender</th><th>DOB</th><th>Guardian</th><th>Phone</th></tr></thead>
+    <thead><tr><th>#</th><th>Adm No</th><th>Name</th><th>Gender</th><th>DOB</th><th>Guardian</th><th>Phone</th>${isRegistrar?"<th>Registered By</th>":""}</tr></thead>
     <tbody>${(students||[]).map((s,i) => `<tr>
       <td>${i+1}</td><td>${s.admission_no}</td><td class="name-cell">${s.full_name}</td>
       <td>${s.gender||"-"}</td><td>${s.date_of_birth||"-"}</td><td>${s.guardian_name||"-"}</td><td>${s.guardian_phone||"-"}</td>
+      ${isRegistrar?`<td>${s.staff?.full_name||"—"}</td>`:""}
     </tr>`).join("")}</tbody></table></div>
     <button class="btn no-print" style="margin-top:12px;" onclick="window.print()"><i class="fa-solid fa-print"></i> Print</button>`;
 }
@@ -98,7 +105,7 @@ async function loadStaffList() {
     </div>`).join("")}</div>`;
 }
 function openStaffForm(staff) {
-  const positions = ["Admin","Headmaster","Principal","Bursar","Admin Officer","Teacher"];
+  const positions = ["Admin","Headmaster","Principal","Bursar","Admin Officer","Teacher","Registrar Primary","Registrar Secondary"];
   openModal(`<h3>${staff ? "Edit" : "Add"} Staff</h3>
     <div class="field"><label>Full Name</label><input id="sfName" value="${staff?.full_name||""}"/></div>
     <div class="field"><label>Staff ID (login)</label><input id="sfCode" value="${staff?.staff_code||""}" data-original="${staff?.staff_code||""}"/></div>
@@ -410,6 +417,13 @@ async function renderSettings() {
       <button class="btn btn-green" onclick="saveSchoolSettings()">Save</button>
     </div>
     <div class="settings-card">
+      <div class="settings-card-title">Registrar Admission Number Scheme</div>
+      <p style="font-size:12px;color:var(--dash-muted);">Controls the automatic admission number registrars get when registering a new student (e.g. prefix "SU2026" + next number "27" → next registration gets SU20260027). After a bulk ID reset, update the next number here so new registrations don't collide with existing ones.</p>
+      <div class="field"><label>Prefix</label><input id="setAdmPrefix" value="${s.student_admission_prefix||"SU"}"/></div>
+      <div class="field"><label>Next Number</label><input id="setAdmNext" type="number" value="${s.student_admission_next_number||1}"/></div>
+      <button class="btn btn-green" onclick="saveAdmissionScheme()">Save</button>
+    </div>
+    <div class="settings-card">
       <div class="settings-card-title">Term Dates</div>
       <p style="font-size:12px;color:var(--dash-muted);">These dates print on every report card (Resumption Date, Closing Date, and the auto-calculated Holidays Duration).</p>
       <div class="field"><label>Term</label><select id="setDatesTerm" onchange="loadTermDatesForm()">
@@ -440,6 +454,13 @@ async function renderSettings() {
   </div>`;
   el.innerHTML = html;
   if (state.role === "admin") loadTermDatesForm();
+}
+async function saveAdmissionScheme() {
+  const student_admission_prefix = document.getElementById("setAdmPrefix").value.trim();
+  const student_admission_next_number = Number(document.getElementById("setAdmNext").value) || 1;
+  if (!student_admission_prefix) { alert("Prefix is required."); return; }
+  const { error } = await sb.from("school_settings").update({ student_admission_prefix, student_admission_next_number }).eq("id", true);
+  if (error) alert(error.message); else { alert("Saved."); Object.assign(state.schoolSettings, { student_admission_prefix, student_admission_next_number }); }
 }
 async function loadTermDatesForm() {
   const termId = document.getElementById("setDatesTerm").value;

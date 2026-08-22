@@ -19,12 +19,15 @@ const NAV_BY_ROLE = {
   bursar: [["fees","fa-money-bill","Fees"], ["settings","fa-gear","My Profile"]],
   teacher: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","My Classes"], ["masterlist","fa-list","Master List"], ["settings","fa-gear","My Profile"]],
   student: [["myReport","fa-file-lines","My Report Card"], ["settings","fa-gear","My Profile"]],
+  registrar_primary: [["registerStudent","fa-user-plus","Register Student"], ["masterlist","fa-list","Master List"], ["settings","fa-gear","My Profile"]],
+  registrar_secondary: [["registerStudent","fa-user-plus","Register Student"], ["masterlist","fa-list","Master List"], ["settings","fa-gear","My Profile"]],
 };
 const TAB_TITLES = { dashboard:"Dashboard", classes:"Classes & Scores", masterlist:"Master List", assignments:"Curriculum & Assignments",
   staffDirectory:"Staff Directory", students:"Students", timetable:"Timetable", certificates:"Certificates & Awards",
   analytics:"Analytics", catracker:"CA Tracker", fees:"Fees", websites:"School Websites", importTool:"Bulk Import",
   classManagement:"Manage Classes", transferStudents:"Transfer Students", scoreControl:"Score Control",
   printReports:"Print Report Cards",
+  registerStudent:"Register Student",
   settings:"Settings", myReport:"My Report Card" };
 
 function buildSidebar() {
@@ -32,7 +35,8 @@ function buildSidebar() {
   document.getElementById("sidebarNav").innerHTML = nav.map(([id,icon,label]) =>
     `<button class="sidebar-item" data-tab="${id}" onclick="switchTab('${id}')"><span class="si-icon"><i class="fa-solid ${icon}"></i></span>${label}</button>`
   ).join("");
-  document.getElementById("topbarRole").textContent = state.role.charAt(0).toUpperCase() + state.role.slice(1);
+  const roleLabels = { registrar_primary: "Registrar (Primary/Nursery)", registrar_secondary: "Registrar (JSS/SS)" };
+  document.getElementById("topbarRole").textContent = roleLabels[state.role] || (state.role.charAt(0).toUpperCase() + state.role.slice(1));
 }
 
 function switchTab(id) {
@@ -46,7 +50,7 @@ function switchTab(id) {
     assignments: renderAssignments, timetable: renderTimetable, certificates: renderCertificates,
     analytics: renderAnalytics, catracker: renderCaTracker, websites: renderWebsites, importTool: renderImportTool,
     classManagement: renderClassManagement, transferStudents: renderTransferStudents, scoreControl: renderScoreControl,
-    printReports: renderPrintReports };
+    printReports: renderPrintReports, registerStudent: renderRegisterStudent };
   (renderers[id] || (() => { document.getElementById(`panel-${id}`).innerHTML = "Coming soon."; }))();
 }
 
@@ -651,6 +655,61 @@ async function loadBulkReportCards() {
   printBtn.disabled = false;
   printBtn.classList.add("btn-green");
   printBtn.innerHTML = `<i class="fa-solid fa-print"></i> Print All ${students.length} Report Cards`;
+}
+// ============================================================
+// REGISTRAR: REGISTER STUDENT (auto admission number)
+// ============================================================
+async function renderRegisterStudent() {
+  const el = document.getElementById("panel-registerStudent");
+  const allowedCategories = state.role === "registrar_primary" ? ["nursery","primary"] : ["jss","ss"];
+  const myClasses = state.classes.filter(c => allowedCategories.includes(c.category));
+  el.innerHTML = `
+    <div class="settings-card">
+      <div class="settings-card-title">Register New Student</div>
+      <div class="field"><label>Full Name</label><input id="regStuName"/></div>
+      <div class="field"><label>Class</label><select id="regStuClass">
+        ${myClasses.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>Gender</label><select id="regStuGender">
+        <option>Male</option><option>Female</option></select></div>
+      <div class="field"><label>Date of Birth</label><input id="regStuDob" type="date"/></div>
+      <button class="btn btn-green" onclick="doRegisterStudent()"><i class="fa-solid fa-user-plus"></i> Register Student</button>
+      <div id="regStuResult" style="margin-top:14px;"></div>
+    </div>
+    <div class="settings-card">
+      <div class="settings-card-title">Recently Registered (this session)</div>
+      <div id="regStuRecent"><p style="color:var(--dash-muted);font-size:12px;">None yet this session.</p></div>
+    </div>`;
+}
+async function doRegisterStudent() {
+  const full_name = document.getElementById("regStuName").value.trim();
+  const class_id = document.getElementById("regStuClass").value;
+  const gender = document.getElementById("regStuGender").value;
+  const dob = document.getElementById("regStuDob").value || null;
+  if (!full_name || !class_id) { alert("Full name and class are required."); return; }
+
+  const { data, error } = await sb.rpc("register_student", { p_full_name: full_name, p_class_id: class_id, p_gender: gender, p_dob: dob });
+  if (error) { alert(error.message); return; }
+  const row = data && data[0];
+  if (!row) { alert("Registration failed — no admission number returned."); return; }
+
+  const defaultPw = state.schoolSettings.student_default_password || "student123";
+  await provisionAuthAccount("student", row.id, row.admission_no, defaultPw);
+
+  document.getElementById("regStuResult").innerHTML = `
+    <div style="background:var(--dash-green-soft);border:1px solid var(--dash-green);border-radius:10px;padding:14px;text-align:center;">
+      <div style="font-size:11px;color:var(--dash-muted);">Admission Number</div>
+      <div style="font-size:22px;font-weight:900;color:var(--dash-accent);">${row.admission_no}</div>
+      <div style="font-size:11px;color:var(--dash-muted);margin-top:6px;">Login password: <strong>${defaultPw}</strong> (school default)</div>
+    </div>`;
+
+  const recentHost = document.getElementById("regStuRecent");
+  if (recentHost.querySelector("p")) recentHost.innerHTML = "";
+  const cls = state.classes.find(c => c.id === class_id);
+  recentHost.innerHTML = `<div class="settings-row"><span>${full_name} (${cls?.name||""})</span><span><strong>${row.admission_no}</strong></span></div>` + recentHost.innerHTML;
+
+  document.getElementById("regStuName").value = "";
+  document.getElementById("regStuDob").value = "";
 }
 async function renderMyReport() {
   const el = document.getElementById("panel-myReport");
