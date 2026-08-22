@@ -435,6 +435,26 @@ async function renderSettings() {
       <button class="btn btn-green" onclick="saveSchoolSettings()">Save</button>
     </div>
     <div class="settings-card">
+      <div class="settings-card-title">Report Card Signatures (fallback)</div>
+      <p style="font-size:12px;color:var(--dash-muted);">These print on report cards only when no staff member currently holds that position in Staff Directory — if a Headmaster/Principal/Admin Officer exists there, their own name and signature (set on their staff profile) are used instead of these.</p>
+      <div class="field"><label>Headmaster Name</label><input id="setHeadmasterName" value="${s.headmaster_fallback_name||""}"/></div>
+      <div class="field"><label>Headmaster Signature — paste direct image link</label>
+        <input id="setHeadmasterSig" value="${s.headmaster_fallback_sig_url||""}" placeholder="https://i.postimg.cc/..."/>
+        ${s.headmaster_fallback_sig_url ? `<img src="${s.headmaster_fallback_sig_url}" style="height:36px;margin-top:6px;" onerror="this.style.display='none'"/>` : ""}
+      </div>
+      <div class="field"><label>Principal Name</label><input id="setPrincipalName" value="${s.principal_fallback_name||""}"/></div>
+      <div class="field"><label>Principal Signature — paste direct image link</label>
+        <input id="setPrincipalSig" value="${s.principal_fallback_sig_url||""}" placeholder="https://i.postimg.cc/..."/>
+        ${s.principal_fallback_sig_url ? `<img src="${s.principal_fallback_sig_url}" style="height:36px;margin-top:6px;" onerror="this.style.display='none'"/>` : ""}
+      </div>
+      <div class="field"><label>Admin Officer Name</label><input id="setAdminOfficerName" value="${s.admin_officer_fallback_name||""}"/></div>
+      <div class="field"><label>Admin Officer Signature — paste direct image link</label>
+        <input id="setAdminOfficerSig" value="${s.admin_officer_fallback_sig_url||""}" placeholder="https://i.postimg.cc/..."/>
+        ${s.admin_officer_fallback_sig_url ? `<img src="${s.admin_officer_fallback_sig_url}" style="height:36px;margin-top:6px;" onerror="this.style.display='none'"/>` : ""}
+      </div>
+      <button class="btn btn-green" onclick="saveSignatureSettings()">Save Signatures</button>
+    </div>
+    <div class="settings-card">
       <div class="settings-card-title">Registrar Admission Number Scheme</div>
       <p style="font-size:12px;color:var(--dash-muted);">Controls the automatic admission number registrars get when registering a new student (e.g. prefix "SU2026" + next number "27" → next registration gets SU20260027). After a bulk ID reset, update the next number here so new registrations don't collide with existing ones.</p>
       <div class="field"><label>Prefix</label><input id="setAdmPrefix" value="${s.student_admission_prefix||"SU"}"/></div>
@@ -559,6 +579,19 @@ async function saveSchoolSettings() {
     secondary_website: document.getElementById("setSecondaryWebsite").value,
     school_logo_url: document.getElementById("setSchoolLogo").value,
     secondary_logo_url: document.getElementById("setSecondaryLogo").value,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await sb.from("school_settings").update(payload).eq("id", true);
+  if (error) alert(error.message); else { alert("Saved."); Object.assign(state.schoolSettings, payload); }
+}
+async function saveSignatureSettings() {
+  const payload = {
+    headmaster_fallback_name: document.getElementById("setHeadmasterName").value,
+    headmaster_fallback_sig_url: document.getElementById("setHeadmasterSig").value,
+    principal_fallback_name: document.getElementById("setPrincipalName").value,
+    principal_fallback_sig_url: document.getElementById("setPrincipalSig").value,
+    admin_officer_fallback_name: document.getElementById("setAdminOfficerName").value,
+    admin_officer_fallback_sig_url: document.getElementById("setAdminOfficerSig").value,
     updated_at: new Date().toISOString(),
   };
   const { error } = await sb.from("school_settings").update(payload).eq("id", true);

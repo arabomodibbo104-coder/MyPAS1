@@ -398,7 +398,7 @@ async function buildReportCardHtml(studentId, termId) {
   const settings = state.schoolSettings;
   const catClass = getCardCategoryClass(student.classes.category);
 
-  const { count: totalInClass } = await sb.from("students").select("id", { count: "exact", head: true }).eq("class_id", student.class_id).eq("is_active", true);
+  const { data: totalInClass } = await sb.rpc("get_class_size", { p_class_id: student.class_id });
 
   const wantPosition = isNurseryPrimary ? "Headmaster" : "Principal";
   const { data: sigStaff } = await sb.from("staff").select("full_name, signature_url, positions").contains("positions", [wantPosition]);
@@ -437,7 +437,7 @@ async function buildReportCardHtml(studentId, termId) {
       <td>${anyEntered ? total : ""}</td>
       <td>${grade}</td>
       <td>${anyEntered ? posLabel : "—"}</td>
-      <td>${anyEntered ? gradeFor(total).remark.split(",")[0] : "ABSENT"}</td>
+      <td>${anyEntered ? subjectRemarkFor(grade) : "ABSENT"}</td>
     </tr>`;
   }
 
@@ -592,6 +592,12 @@ async function renderReportCardQr(studentId) {
   new QRCode(container, { text: qrText, width: 100, height: 100, colorDark: "#000000", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
 }
 
+// Short grade-letter remark used ONLY in the subject table's Remark
+// column (distinct from the longer Term Summary remark below it).
+function subjectRemarkFor(grade) {
+  const map = { A: "Excellent", B: "Very Good", C: "Good", D: "Average", E: "Poor", F: "Fail" };
+  return map[grade] || "";
+}
 function gradeFor(avg) {
   if (avg >= 70) return { grade: "A", remark: "Excellent result, keep the flag flying!" };
   if (avg >= 60) return { grade: "B", remark: "Very good performance, aim even higher!" };
