@@ -332,8 +332,15 @@ async function loadFeesOverview() {
   const expectedByCategory = {}; (structure||[]).forEach(s => expectedByCategory[s.category] = s.expected_amount);
   const payMap = {}; (payments||[]).forEach(p => payMap[p.student_id] = p);
 
+  // Students with no class assigned have no determinable expected
+  // fee — counting them as "paid" (because 0 >= 0) was the bug.
+  // Exclude them from fee totals entirely and surface the count
+  // separately so it's clear why they're missing, not silently wrong.
+  const classedStudents = (students||[]).filter(s => s.class_id);
+  const unassignedCount = (students||[]).length - classedStudents.length;
+
   let totalCollected = 0, totalOutstandingAmount = 0, paidCount = 0, unpaidCount = 0;
-  (students||[]).forEach(stu => {
+  classedStudents.forEach(stu => {
     const expected = expectedByCategory[stu.classes?.category] || 0;
     const pay = payMap[stu.id];
     const paidAmt = pay?.amount_paid || 0;
@@ -348,7 +355,10 @@ async function loadFeesOverview() {
     ${statCard("fa-triangle-exclamation", "₦" + totalOutstandingAmount.toLocaleString(), "Total Outstanding")}
     ${statCard("fa-circle-check", paidCount, "Students Fully Paid")}
     ${statCard("fa-circle-xmark", unpaidCount, "Students Owing")}
-  </div>`;
+  </div>
+  ${unassignedCount > 0 ? `<p style="font-size:12px;color:var(--dash-muted);margin-top:10px;">
+    <i class="fa-solid fa-triangle-exclamation"></i> ${unassignedCount} active student(s) have no class assigned and are excluded from these totals —
+    see <a href="#" onclick="switchTab('unassignedStudents');return false;" style="color:var(--dash-accent);">Unassigned Students</a> to fix.</p>` : ""}`;
 }
 
 async function loadFeesGrid() {

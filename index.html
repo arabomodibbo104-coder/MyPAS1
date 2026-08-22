@@ -299,7 +299,10 @@ table.data-table td.name-cell { text-align:left; font-weight:700; }
   <div class="main-area">
     <div class="topbar">
       <button class="hamburger-btn" onclick="toggleSidebar(true)"><i class="fa-solid fa-bars"></i></button>
-      <div class="topbar-title" id="topbarTitle">Dashboard</div>
+      <div style="flex:1;">
+        <div id="topbarGreeting" style="font-size:11px;color:var(--dash-accent);font-weight:800;"></div>
+        <div class="topbar-title" id="topbarTitle">Dashboard</div>
+      </div>
       <span class="topbar-role" id="topbarRole"></span>
       <button class="theme-toggle-btn" onclick="toggleTheme()"><i class="fa-solid fa-circle-half-stroke"></i></button>
     </div>

@@ -11,7 +11,7 @@ const NAV_BY_ROLE = {
     ["fees","fa-money-bill","Fees"], ["websites","fa-globe","School Websites"],
     ["importTool","fa-file-import","Bulk Import"], ["classManagement","fa-school","Manage Classes"],
     ["transferStudents","fa-people-arrows","Transfer Students"], ["scoreControl","fa-lock","Score Control"],
-    ["printReports","fa-print","Print Report Cards"],
+    ["printReports","fa-print","Print Report Cards"], ["unassignedStudents","fa-user-slash","Unassigned Students"],
     ["settings","fa-gear","Settings"],
   ],
   headmaster: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["settings","fa-gear","My Profile"]],
@@ -26,7 +26,7 @@ const TAB_TITLES = { dashboard:"Dashboard", classes:"Classes & Scores", masterli
   staffDirectory:"Staff Directory", students:"Students", timetable:"Timetable", certificates:"Certificates & Awards",
   analytics:"Analytics", catracker:"CA Tracker", fees:"Fees", websites:"School Websites", importTool:"Bulk Import",
   classManagement:"Manage Classes", transferStudents:"Transfer Students", scoreControl:"Score Control",
-  printReports:"Print Report Cards",
+  printReports:"Print Report Cards", unassignedStudents:"Unassigned Students",
   registerStudent:"Register Student",
   settings:"Settings", myReport:"My Report Card" };
 
@@ -37,6 +37,8 @@ function buildSidebar() {
   ).join("");
   const roleLabels = { registrar_primary: "Registrar (Primary/Nursery)", registrar_secondary: "Registrar (JSS/SS)" };
   document.getElementById("topbarRole").textContent = roleLabels[state.role] || (state.role.charAt(0).toUpperCase() + state.role.slice(1));
+  const fullName = state.staff?.full_name || state.student?.full_name || "";
+  document.getElementById("topbarGreeting").textContent = fullName ? `Welcome, ${fullName}!` : "";
 }
 
 function switchTab(id) {
@@ -50,7 +52,7 @@ function switchTab(id) {
     assignments: renderAssignments, timetable: renderTimetable, certificates: renderCertificates,
     analytics: renderAnalytics, catracker: renderCaTracker, websites: renderWebsites, importTool: renderImportTool,
     classManagement: renderClassManagement, transferStudents: renderTransferStudents, scoreControl: renderScoreControl,
-    printReports: renderPrintReports, registerStudent: renderRegisterStudent };
+    printReports: renderPrintReports, registerStudent: renderRegisterStudent, unassignedStudents: renderUnassignedStudents };
   (renderers[id] || (() => { document.getElementById(`panel-${id}`).innerHTML = "Coming soon."; }))();
 }
 
@@ -659,6 +661,40 @@ async function loadBulkReportCards() {
 // ============================================================
 // REGISTRAR: REGISTER STUDENT (auto admission number)
 // ============================================================
+// ============================================================
+// UNASSIGNED STUDENTS — active students with no class set
+// ============================================================
+async function renderUnassignedStudents() {
+  const el = document.getElementById("panel-unassignedStudents");
+  el.innerHTML = `<p style="color:var(--dash-muted);font-size:12px;">Students in this list are excluded from Fees totals, report cards, and Master List until assigned to a class.</p>
+    <div id="unassignedBody">Loading…</div>`;
+  await loadUnassignedStudents();
+}
+async function loadUnassignedStudents() {
+  const body = document.getElementById("unassignedBody");
+  const { data: students } = await sb.from("students").select("id, full_name, admission_no, gender")
+    .is("class_id", null).eq("is_active", true).order("full_name");
+  if (!students || !students.length) { body.innerHTML = `<p style="color:var(--dash-muted);">None — every active student is assigned to a class.</p>`; return; }
+  body.innerHTML = `<div style="overflow-x:auto;"><table class="data-table">
+    <thead><tr><th>Admission No</th><th>Name</th><th>Gender</th><th>Assign to Class</th></tr></thead>
+    <tbody>${students.map(s => `<tr>
+      <td>${s.admission_no}</td><td class="name-cell">${s.full_name}</td><td>${s.gender||"-"}</td>
+      <td style="display:flex;gap:6px;">
+        <select id="ua_cls_${s.id}" style="flex:1;">
+          <option value="">— choose class —</option>
+          ${state.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}
+        </select>
+        <button class="btn btn-green" onclick="assignUnassignedStudent('${s.id}')">Assign</button>
+      </td>
+    </tr>`).join("")}</tbody></table></div>`;
+}
+async function assignUnassignedStudent(studentId) {
+  const classId = document.getElementById(`ua_cls_${studentId}`).value;
+  if (!classId) { alert("Choose a class first."); return; }
+  const { error } = await sb.from("students").update({ class_id: classId, updated_at: new Date().toISOString() }).eq("id", studentId);
+  if (error) { alert(error.message); return; }
+  loadUnassignedStudents();
+}
 async function renderRegisterStudent() {
   const el = document.getElementById("panel-registerStudent");
   const allowedCategories = state.role === "registrar_primary" ? ["nursery","primary"] : ["jss","ss"];
