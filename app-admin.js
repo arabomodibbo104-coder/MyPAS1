@@ -3,15 +3,27 @@
 // ============================================================
 async function renderMasterList() {
   const el = document.getElementById("panel-masterlist");
+  const roles = state.allRoles || [state.role];
   let myClasses = state.classes;
-  if (state.role === "teacher") {
-    const { data: assigns } = await sb.from("class_teacher_subjects").select("class_id").eq("staff_id", state.staff.id);
-    const ids = new Set((assigns || []).map(a => a.class_id));
-    myClasses = state.classes.filter(c => ids.has(c.id));
-  } else if (state.role === "registrar_primary") {
-    myClasses = state.classes.filter(c => c.category === "nursery" || c.category === "primary");
-  } else if (state.role === "registrar_secondary") {
-    myClasses = state.classes.filter(c => c.category === "jss" || c.category === "ss");
+  // Admin/headmaster/principal always see everything relevant to
+  // their office already, so only narrow the list down for people
+  // whose ENTIRE role set is teacher/registrar-only (no elevated
+  // position) — union their teacher assignments with their
+  // registrar section(s) rather than picking just one.
+  const hasBroadAccess = roles.some(r => ["admin","headmaster","principal"].includes(r));
+  if (!hasBroadAccess) {
+    const idSet = new Set();
+    if (roles.includes("teacher")) {
+      const { data: assigns } = await sb.from("class_teacher_subjects").select("class_id").eq("staff_id", state.staff.id);
+      (assigns || []).forEach(a => idSet.add(a.class_id));
+    }
+    if (roles.includes("registrar_primary")) {
+      state.classes.filter(c => c.category === "nursery" || c.category === "primary").forEach(c => idSet.add(c.id));
+    }
+    if (roles.includes("registrar_secondary")) {
+      state.classes.filter(c => c.category === "jss" || c.category === "ss").forEach(c => idSet.add(c.id));
+    }
+    if (idSet.size) myClasses = state.classes.filter(c => idSet.has(c.id));
   }
   el.innerHTML = `<div class="field"><label>Select Class</label>
     <select id="mlClassSelect" onchange="loadMasterList(this.value)">
@@ -24,7 +36,7 @@ async function loadMasterList(classId) {
   const body = document.getElementById("mlBody");
   if (!classId) { body.innerHTML = ""; return; }
   body.innerHTML = "Loading…";
-  const isRegistrar = state.role === "registrar_primary" || state.role === "registrar_secondary";
+  const isRegistrar = (state.allRoles || []).some(r => r === "registrar_primary" || r === "registrar_secondary");
   const { data: students } = await sb.from("students")
     .select("admission_no, full_name, gender, date_of_birth, guardian_name, guardian_phone, staff:registered_by(full_name)")
     .eq("class_id", classId).eq("is_active", true).order("full_name");

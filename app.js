@@ -48,6 +48,19 @@ async function loadClassOptionsForLogin() {
 }
 loadClassOptionsForLogin();
 
+// Show school name + logo on the login screen before anyone signs
+// in (school_settings is publicly readable for exactly this reason).
+(async function loadLoginBranding() {
+  const { data: settings } = await sb.from("school_settings").select("school_name, school_logo_url").maybeSingle();
+  if (!settings) return;
+  if (settings.school_name) document.getElementById("loginSchoolName").textContent = settings.school_name;
+  if (settings.school_logo_url) {
+    const img = document.getElementById("loginSchoolLogo");
+    img.src = settings.school_logo_url;
+    img.style.display = "block";
+  }
+})();
+
 // ---------------------------------------------------------------
 // AUTH: STAFF LOGIN
 // ---------------------------------------------------------------
@@ -133,6 +146,7 @@ async function bootAfterLogin() {
   }
   const r = roleRows[0];
   state.role = r.role;
+  state.allRoles = r.all_roles && r.all_roles.length ? r.all_roles : [r.role];
 
   if (r.staff_id) {
     const { data: staffRow } = await sb.from("staff").select("*").eq("id", r.staff_id).single();

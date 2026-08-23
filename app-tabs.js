@@ -31,12 +31,25 @@ const TAB_TITLES = { dashboard:"Dashboard", classes:"Classes & Scores", masterli
   settings:"Settings", myReport:"My Report Card" };
 
 function buildSidebar() {
-  const nav = NAV_BY_ROLE[state.role] || [];
+  // Merge nav tabs across ALL of this person's roles (e.g. an
+  // Admin who is also Teacher + Registrar sees every relevant tab
+  // for each duty, not just the highest-priority one).
+  const seen = new Set();
+  const nav = [];
+  (state.allRoles || [state.role]).forEach(role => {
+    (NAV_BY_ROLE[role] || []).forEach(item => {
+      if (!seen.has(item[0])) { seen.add(item[0]); nav.push(item); }
+    });
+  });
   document.getElementById("sidebarNav").innerHTML = nav.map(([id,icon,label]) =>
     `<button class="sidebar-item" data-tab="${id}" onclick="switchTab('${id}')"><span class="si-icon"><i class="fa-solid ${icon}"></i></span>${label}</button>`
   ).join("");
   const roleLabels = { registrar_primary: "Registrar (Primary/Nursery)", registrar_secondary: "Registrar (JSS/SS)" };
-  document.getElementById("topbarRole").textContent = roleLabels[state.role] || (state.role.charAt(0).toUpperCase() + state.role.slice(1));
+  const displayLabel = r => roleLabels[r] || (r.charAt(0).toUpperCase() + r.slice(1));
+  const roleText = (state.allRoles && state.allRoles.length > 1)
+    ? state.allRoles.map(displayLabel).join(" + ")
+    : displayLabel(state.role);
+  document.getElementById("topbarRole").textContent = roleText;
   const fullName = state.staff?.full_name || state.student?.full_name || "";
   document.getElementById("topbarGreeting").textContent = fullName ? `Welcome, ${fullName}!` : "";
 }
@@ -80,15 +93,21 @@ function statCard(icon, value, label) {
 // ============================================================
 async function renderClasses() {
   const el = document.getElementById("panel-classes");
+  const roles = state.allRoles || [state.role];
   let myClasses = state.classes;
-  if (state.role === "teacher") {
-    const { data: assigns } = await sb.from("class_teacher_subjects").select("class_id").eq("staff_id", state.staff.id);
-    const ids = new Set((assigns || []).map(a => a.class_id));
-    myClasses = state.classes.filter(c => ids.has(c.id));
-  } else if (state.role === "headmaster") {
-    myClasses = state.classes.filter(c => c.category === "nursery" || c.category === "primary");
-  } else if (state.role === "principal") {
-    myClasses = state.classes.filter(c => c.category === "jss" || c.category === "ss");
+  if (!roles.includes("admin")) {
+    const idSet = new Set();
+    if (roles.includes("teacher")) {
+      const { data: assigns } = await sb.from("class_teacher_subjects").select("class_id").eq("staff_id", state.staff.id);
+      (assigns || []).forEach(a => idSet.add(a.class_id));
+    }
+    if (roles.includes("headmaster")) {
+      state.classes.filter(c => c.category === "nursery" || c.category === "primary").forEach(c => idSet.add(c.id));
+    }
+    if (roles.includes("principal")) {
+      state.classes.filter(c => c.category === "jss" || c.category === "ss").forEach(c => idSet.add(c.id));
+    }
+    if (idSet.size) myClasses = state.classes.filter(c => idSet.has(c.id));
   }
   el.innerHTML = `<div class="card-grid">${myClasses.map(c => `
     <div class="class-card" onclick="openClass('${c.id}')">
@@ -133,7 +152,8 @@ async function loadClassScoreGrid() {
   ]);
 
   let subjectList = (classSubjects || []).map(cs => cs.subjects);
-  if (state.role === "teacher") {
+  const roles = state.allRoles || [state.role];
+  if (roles.includes("teacher") && !roles.some(r => ["admin","headmaster","principal"].includes(r))) {
     const { data: mySubs } = await sb.from("class_teacher_subjects").select("subject_id").eq("staff_id", state.staff.id).eq("class_id", classId);
     const allowed = new Set((mySubs || []).map(s => s.subject_id));
     subjectList = subjectList.filter(s => allowed.has(s.id));
@@ -152,7 +172,8 @@ async function loadClassScoreGrid() {
   const { data: approvedReqs } = await sb.from("score_unlock_requests").select("*").eq("class_id", classId).eq("term_id", termId).eq("status", "approved");
   state.currentApprovedExceptions = approvedReqs || [];
 
-  const isPrivileged = ["admin", "headmaster", "principal"].includes(state.role);
+  const roles2 = state.allRoles || [state.role];
+  const isPrivileged = roles2.some(r => ["admin", "headmaster", "principal"].includes(r));
   function cellEditable(subjectId, period, studentId) {
     if (isPrivileged) return true;
     if (!windowMap[period]) return false;
@@ -218,7 +239,7 @@ async function loadClassScoreGrid() {
 
   // Per-subject submit / request-unlock controls (teachers submit their
   // own subject; anyone assigned can request an unlock for missed students)
-  if (state.role === "teacher" || isPrivileged) {
+  if (roles2.includes("teacher") || isPrivileged) {
     html += `<div class="settings-card" style="margin-top:16px;"><div class="settings-card-title">Submit / Unlock Scores</div>`;
     subjectList.forEach(subj => {
       html += `<div class="settings-row"><span>${subj.name}</span><div style="display:flex;gap:6px;flex-wrap:wrap;">`;
@@ -386,27 +407,45 @@ function displayScore(value) {
     : value;
 }
 
-async function buildReportCardHtml(studentId, termId) {
-  const [{ data: student }, { data: summary }, { data: scores }, { data: term }] = await Promise.all([
-    sb.from("students").select("*, classes(name,category)").eq("id", studentId).single(),
-    sb.from("student_term_summary").select("*").eq("student_id", studentId).eq("term_id", termId).maybeSingle(),
-    sb.from("student_scores").select("*, subjects(name)").eq("student_id", studentId).eq("term_id", termId),
-    sb.from("terms").select("*, sessions(label)").eq("id", termId).single(),
-  ]);
+// shared (optional): when building MANY report cards at once (bulk
+// print), pass pre-fetched class-wide data here so this function
+// makes ZERO extra network round-trips per student. Without it,
+// falls back to fetching everything itself (fine for a single card).
+async function buildReportCardHtml(studentId, termId, shared = null) {
+  let student, summary, scores, term;
+  if (shared?.studentsById) {
+    student = shared.studentsById[studentId];
+    summary = shared.summaryByStudent?.[studentId] || null;
+    scores = shared.scoresByStudent?.[studentId] || [];
+    term = shared.term;
+  } else {
+    const results = await Promise.all([
+      sb.from("students").select("*, classes(name,category)").eq("id", studentId).single(),
+      sb.from("student_term_summary").select("*").eq("student_id", studentId).eq("term_id", termId).maybeSingle(),
+      sb.from("student_scores").select("*, subjects(name)").eq("student_id", studentId).eq("term_id", termId),
+      sb.from("terms").select("*, sessions(label)").eq("id", termId).single(),
+    ]);
+    student = results[0].data; summary = results[1].data; scores = results[2].data; term = results[3].data;
+  }
   if (!student) return "<p>Student not found.</p>";
   const isNurseryPrimary = student.classes.category === "nursery" || student.classes.category === "primary";
   const settings = state.schoolSettings;
   const catClass = getCardCategoryClass(student.classes.category);
 
-  const { data: totalInClass } = await sb.rpc("get_class_size", { p_class_id: student.class_id });
+  const totalInClass = shared?.classSize ?? (await sb.rpc("get_class_size", { p_class_id: student.class_id })).data;
 
-  const wantPosition = isNurseryPrimary ? "Headmaster" : "Principal";
-  const { data: sigStaff } = await sb.from("staff").select("full_name, signature_url, positions").contains("positions", [wantPosition]);
-  const { data: adminOfficer } = await sb.from("staff").select("full_name, signature_url").contains("positions", ["Admin Officer"]);
-  const authorityName = (sigStaff && sigStaff[0]?.full_name) || settings[`${wantPosition.toLowerCase()}_fallback_name`] || wantPosition;
-  const authoritySig = (sigStaff && sigStaff[0]?.signature_url) || settings[`${wantPosition.toLowerCase()}_fallback_sig_url`] || "";
-  const adminOfficerName = (adminOfficer && adminOfficer[0]?.full_name) || settings.admin_officer_fallback_name || "Admin Officer";
-  const adminOfficerSig = (adminOfficer && adminOfficer[0]?.signature_url) || settings.admin_officer_fallback_sig_url || "";
+  let authorityName, authoritySig, adminOfficerName, adminOfficerSig, wantPosition;
+  if (shared?.signatories) {
+    ({ authorityName, authoritySig, adminOfficerName, adminOfficerSig, wantPosition } = shared.signatories[isNurseryPrimary ? "primary" : "secondary"]);
+  } else {
+    wantPosition = isNurseryPrimary ? "Headmaster" : "Principal";
+    const { data: sigStaff } = await sb.from("staff").select("full_name, signature_url, positions").contains("positions", [wantPosition]);
+    const { data: adminOfficer } = await sb.from("staff").select("full_name, signature_url").contains("positions", ["Admin Officer"]);
+    authorityName = (sigStaff && sigStaff[0]?.full_name) || settings[`${wantPosition.toLowerCase()}_fallback_name`] || wantPosition;
+    authoritySig = (sigStaff && sigStaff[0]?.signature_url) || settings[`${wantPosition.toLowerCase()}_fallback_sig_url`] || "";
+    adminOfficerName = (adminOfficer && adminOfficer[0]?.full_name) || settings.admin_officer_fallback_name || "Admin Officer";
+    adminOfficerSig = (adminOfficer && adminOfficer[0]?.signature_url) || settings.admin_officer_fallback_sig_url || "";
+  }
   const website = isNurseryPrimary ? (settings.primary_website || "") : (settings.secondary_website || "");
 
   const schoolLogoHtml = settings.school_logo_url ? `<img src="${settings.school_logo_url}" class="school-logo-img" crossorigin="anonymous" onerror="this.style.opacity='0'">` : "";
@@ -423,9 +462,13 @@ async function buildReportCardHtml(studentId, termId) {
     const grade = anyEntered ? gradeFor(total).grade : "";
     let posLabel = "—";
     if (anyEntered) {
-      const { data: ranks } = await sb.rpc("subject_ranks", { p_class_id: student.class_id, p_term_id: termId, p_subject_id: s.subject_id });
-      const mine = (ranks || []).find(r => r.student_id === studentId);
-      posLabel = mine ? mine.position_label : "—";
+      if (shared?.ranksMap) {
+        posLabel = shared.ranksMap[s.subject_id]?.[studentId] || "—";
+      } else {
+        const { data: ranks } = await sb.rpc("subject_ranks", { p_class_id: student.class_id, p_term_id: termId, p_subject_id: s.subject_id });
+        const mine = (ranks || []).find(r => r.student_id === studentId);
+        posLabel = mine ? mine.position_label : "—";
+      }
     }
     subjRows += `<tr>
       <td>${subjNo}</td>
@@ -458,14 +501,21 @@ async function buildReportCardHtml(studentId, termId) {
   const summaryTitle = isThirdTerm ? "Third Term Summary" : "Term Summary";
 
   if (isThirdTerm && summary?.annual_average != null) {
-    const { data: session } = await sb.from("sessions").select("id").eq("label", term?.sessions?.label || settings.current_session).maybeSingle();
-    const { data: siblingTerms } = await sb.from("terms").select("id, name").eq("session_id", session?.id || term?.session_id);
-    const firstTermId = siblingTerms?.find(t => t.name === "First Term")?.id;
-    const secondTermId = siblingTerms?.find(t => t.name === "Second Term")?.id;
-    const [{ data: firstSummary }, { data: secondSummary }] = await Promise.all([
-      firstTermId ? sb.from("student_term_summary").select("average").eq("student_id", studentId).eq("term_id", firstTermId).maybeSingle() : { data: null },
-      secondTermId ? sb.from("student_term_summary").select("average").eq("student_id", studentId).eq("term_id", secondTermId).maybeSingle() : { data: null },
-    ]);
+    let firstSummary, secondSummary;
+    if (shared?.siblingSummaries) {
+      firstSummary = shared.siblingSummaries.first?.[studentId];
+      secondSummary = shared.siblingSummaries.second?.[studentId];
+    } else {
+      const { data: session } = await sb.from("sessions").select("id").eq("label", term?.sessions?.label || settings.current_session).maybeSingle();
+      const { data: siblingTerms } = await sb.from("terms").select("id, name").eq("session_id", session?.id || term?.session_id);
+      const firstTermId = siblingTerms?.find(t => t.name === "First Term")?.id;
+      const secondTermId = siblingTerms?.find(t => t.name === "Second Term")?.id;
+      const [{ data: fs }, { data: ss }] = await Promise.all([
+        firstTermId ? sb.from("student_term_summary").select("average").eq("student_id", studentId).eq("term_id", firstTermId).maybeSingle() : { data: null },
+        secondTermId ? sb.from("student_term_summary").select("average").eq("student_id", studentId).eq("term_id", secondTermId).maybeSingle() : { data: null },
+      ]);
+      firstSummary = fs; secondSummary = ss;
+    }
     const fmtAvg = v => (v === null || v === undefined ? "—" : v + "%");
     const annualGrade = gradeFor(summary.annual_average).grade;
     lowerLeftHtml = `
@@ -579,11 +629,20 @@ async function buildReportCardHtml(studentId, termId) {
   </div>`;
 }
 
-async function renderReportCardQr(studentId) {
+async function renderReportCardQr(studentId, shared = null) {
   const container = document.getElementById(`qrcode-${studentId}`);
   if (!container || typeof QRCode === "undefined") return;
-  const { data: student } = await sb.from("students").select("full_name, class_id, classes(name)").eq("id", studentId).single();
-  const { data: summary } = await sb.from("student_term_summary").select("*").eq("student_id", studentId).eq("term_id", state.currentTermId).maybeSingle();
+  let student, summary;
+  if (shared?.studentsById) {
+    student = shared.studentsById[studentId];
+    summary = shared.summaryByStudent?.[studentId] || null;
+  } else {
+    const results = await Promise.all([
+      sb.from("students").select("full_name, class_id, classes(name)").eq("id", studentId).single(),
+      sb.from("student_term_summary").select("*").eq("student_id", studentId).eq("term_id", state.currentTermId).maybeSingle(),
+    ]);
+    student = results[0].data; summary = results[1].data;
+  }
   const settings = state.schoolSettings;
   const qrText = `SCHOOL: ${settings.school_name || ""}\nSTUDENT: ${student?.full_name || ""}\nCLASS: ${student?.classes?.name || ""}\n` +
     `TOTAL: ${summary?.total_marks ?? ""}\nAVG: ${summary?.average ?? ""}%\nPOS: ${summary?.class_position_label || ""}\n` +
@@ -642,13 +701,69 @@ async function loadBulkReportCards() {
   printBtn.disabled = true; printBtn.classList.remove("btn-green"); printBtn.textContent = "Print All (load first)";
   status.textContent = "Loading students…";
 
-  const { data: students } = await sb.from("students").select("id, full_name").eq("class_id", classId).eq("is_active", true).order("full_name");
+  const { data: students } = await sb.from("students").select("*, classes(name,category)").eq("class_id", classId).eq("is_active", true).order("full_name");
   if (!students || !students.length) { status.textContent = "No active students in this class."; return; }
+
+  // Fetch everything the WHOLE class needs in a handful of queries,
+  // instead of buildReportCardHtml doing it per-student. This is
+  // what actually made bulk printing slow before: a 60-student,
+  // 15-subject class was making 900+ sequential round-trips just
+  // for subject rankings alone, plus hundreds more for signatures,
+  // class size, and annual-summary lookups repeated per student.
+  status.textContent = "Loading class data…";
+  const cls = state.classes.find(c => c.id === classId);
+  const isNurseryPrimary = cls.category === "nursery" || cls.category === "primary";
+  const wantPosition = isNurseryPrimary ? "Headmaster" : "Principal";
+  const settings = state.schoolSettings;
+
+  const [{ data: classSize }, { data: ranks }, { data: sigStaff }, { data: adminOfficer }, { data: term },
+    { data: allScores }, { data: allSummaries }] = await Promise.all([
+    sb.rpc("get_class_size", { p_class_id: classId }),
+    sb.rpc("get_class_subject_ranks", { p_class_id: classId, p_term_id: termId }),
+    sb.from("staff").select("full_name, signature_url, positions").contains("positions", [wantPosition]),
+    sb.from("staff").select("full_name, signature_url").contains("positions", ["Admin Officer"]),
+    sb.from("terms").select("*, sessions(label)").eq("id", termId).single(),
+    sb.from("student_scores").select("*, subjects(name)").eq("class_id", classId).eq("term_id", termId),
+    sb.from("student_term_summary").select("*").eq("class_id", classId).eq("term_id", termId),
+  ]);
+
+  const studentsById = {}; students.forEach(s => studentsById[s.id] = s);
+  const scoresByStudent = {}; (allScores || []).forEach(s => (scoresByStudent[s.student_id] ||= []).push(s));
+  const summaryByStudent = {}; (allSummaries || []).forEach(s => summaryByStudent[s.student_id] = s);
+  const ranksMap = {};
+  (ranks || []).forEach(r => { (ranksMap[r.subject_id] ||= {})[r.student_id] = r.position_label; });
+
+  const authorityName = (sigStaff && sigStaff[0]?.full_name) || settings[`${wantPosition.toLowerCase()}_fallback_name`] || wantPosition;
+  const authoritySig = (sigStaff && sigStaff[0]?.signature_url) || settings[`${wantPosition.toLowerCase()}_fallback_sig_url`] || "";
+  const adminOfficerName = (adminOfficer && adminOfficer[0]?.full_name) || settings.admin_officer_fallback_name || "Admin Officer";
+  const adminOfficerSig = (adminOfficer && adminOfficer[0]?.signature_url) || settings.admin_officer_fallback_sig_url || "";
+  const signatoryInfo = { authorityName, authoritySig, adminOfficerName, adminOfficerSig, wantPosition };
+  const signatories = { primary: signatoryInfo, secondary: signatoryInfo };
+
+  // Third Term annual summary needs First/Second term averages for
+  // every student — fetch both sibling terms for the WHOLE class
+  // at once, not per student.
+  let siblingSummaries = null;
+  if ((term?.name || "").toLowerCase().includes("third")) {
+    const { data: session } = await sb.from("sessions").select("id").eq("label", term?.sessions?.label || settings.current_session).maybeSingle();
+    const { data: siblingTerms } = await sb.from("terms").select("id, name").eq("session_id", session?.id || term?.session_id);
+    const firstTermId = siblingTerms?.find(t => t.name === "First Term")?.id;
+    const secondTermId = siblingTerms?.find(t => t.name === "Second Term")?.id;
+    const [{ data: firstRows }, { data: secondRows }] = await Promise.all([
+      firstTermId ? sb.from("student_term_summary").select("student_id, average").eq("class_id", classId).eq("term_id", firstTermId) : { data: [] },
+      secondTermId ? sb.from("student_term_summary").select("student_id, average").eq("class_id", classId).eq("term_id", secondTermId) : { data: [] },
+    ]);
+    const first = {}; (firstRows || []).forEach(r => first[r.student_id] = r);
+    const second = {}; (secondRows || []).forEach(r => second[r.student_id] = r);
+    siblingSummaries = { first, second };
+  }
+
+  const shared = { classSize, ranksMap, signatories, siblingSummaries, studentsById, scoresByStudent, summaryByStudent, term };
 
   let cardsHtml = "";
   for (let i = 0; i < students.length; i++) {
     status.textContent = `Building report card ${i + 1} of ${students.length}…`;
-    cardsHtml += await buildReportCardHtml(students[i].id, termId);
+    cardsHtml += await buildReportCardHtml(students[i].id, termId, shared);
   }
   host.innerHTML = cardsHtml;
   status.textContent = `${students.length} report card(s) ready.`;
@@ -657,7 +772,7 @@ async function loadBulkReportCards() {
   // host.innerHTML again after this, since re-serializing would
   // wipe the QR canvases).
   for (const s of students) {
-    await renderReportCardQr(s.id);
+    await renderReportCardQr(s.id, shared);
   }
 
   printBtn.disabled = false;
@@ -703,7 +818,13 @@ async function assignUnassignedStudent(studentId) {
 }
 async function renderRegisterStudent() {
   const el = document.getElementById("panel-registerStudent");
-  const allowedCategories = state.role === "registrar_primary" ? ["nursery","primary"] : ["jss","ss"];
+  const roles = state.allRoles || [state.role];
+  let allowedCategories = [];
+  if (roles.includes("admin")) allowedCategories = ["nursery","primary","jss","ss"];
+  else {
+    if (roles.includes("registrar_primary")) allowedCategories.push("nursery","primary");
+    if (roles.includes("registrar_secondary")) allowedCategories.push("jss","ss");
+  }
   const myClasses = state.classes.filter(c => allowedCategories.includes(c.category));
   const s = state.schoolSettings;
   const prefix = s.student_admission_prefix || "SU";
