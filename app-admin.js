@@ -510,11 +510,22 @@ async function renderSettings() {
   html += `<div class="settings-card">
     <div class="settings-card-title">My Account</div>
     <div class="settings-row"><span>Name</span><span>${state.staff?.full_name || state.student?.full_name || "—"}</span></div>
+    ${state.staff ? `<div class="settings-row"><span>My Salary Status (${state.terms.find(t=>t.id===state.currentTermId)?.name||"This Term"})</span><span id="mySalaryStatus">Loading…</span></div>` : ""}
     <div class="field"><label>New Password</label><input id="myNewPassword" type="password"/></div>
     <button class="btn btn-green" onclick="changeMyPassword()">Update Password</button>
   </div>`;
   el.innerHTML = html;
   if (state.role === "admin") { loadTermDatesForm(); loadAdmSchemeInfo(); }
+  if (state.staff) loadMySalaryStatus();
+}
+async function loadMySalaryStatus() {
+  const { data } = await sb.from("staff").select("salary_status").eq("id", state.staff.id).single();
+  const status = (data?.salary_status || {})[state.currentTermId] || null;
+  const el = document.getElementById("mySalaryStatus");
+  if (!el) return;
+  el.innerHTML = status === "Paid" ? `<span style="color:#22c55e;font-weight:800;">✔ Paid</span>`
+    : status === "Unpaid" ? `<span style="color:#ef4444;font-weight:800;">✘ Unpaid</span>`
+    : `<span style="color:var(--dash-muted);">Not recorded yet</span>`;
 }
 async function saveAdmissionScheme() {
   const student_admission_prefix = document.getElementById("setAdmPrefix").value.trim();

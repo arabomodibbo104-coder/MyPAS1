@@ -10,6 +10,7 @@ const NAV_BY_ROLE = {
     ["analytics","fa-chart-line","Analytics"], ["catracker","fa-list-check","CA Tracker"],
     ["fees","fa-money-bill","Fees"], ["websites","fa-globe","School Websites"],
     ["importTool","fa-file-import","Bulk Import"], ["classManagement","fa-school","Manage Classes"],
+    ["salaryTracker","fa-money-check-dollar","Salary Tracker"],
     ["transferStudents","fa-people-arrows","Transfer Students"], ["scoreControl","fa-lock","Score Control"],
     ["printReports","fa-print","Print Report Cards"], ["unassignedStudents","fa-user-slash","Unassigned Students"],
     ["settings","fa-gear","Settings"],
@@ -26,7 +27,7 @@ const TAB_TITLES = { dashboard:"Dashboard", classes:"Classes & Scores", masterli
   staffDirectory:"Staff Directory", students:"Students", timetable:"Timetable", certificates:"Certificates & Awards",
   analytics:"Analytics", catracker:"CA Tracker", fees:"Fees", websites:"School Websites", importTool:"Bulk Import",
   classManagement:"Manage Classes", transferStudents:"Transfer Students", scoreControl:"Score Control",
-  printReports:"Print Report Cards", unassignedStudents:"Unassigned Students",
+  printReports:"Print Report Cards", unassignedStudents:"Unassigned Students", salaryTracker:"Salary Tracker",
   registerStudent:"Register Student",
   settings:"Settings", myReport:"My Report Card" };
 
@@ -65,7 +66,8 @@ function switchTab(id) {
     assignments: renderAssignments, timetable: renderTimetable, certificates: renderCertificates,
     analytics: renderAnalytics, catracker: renderCaTracker, websites: renderWebsites, importTool: renderImportTool,
     classManagement: renderClassManagement, transferStudents: renderTransferStudents, scoreControl: renderScoreControl,
-    printReports: renderPrintReports, registerStudent: renderRegisterStudent, unassignedStudents: renderUnassignedStudents };
+    printReports: renderPrintReports, registerStudent: renderRegisterStudent, unassignedStudents: renderUnassignedStudents,
+    salaryTracker: renderSalaryTracker };
   (renderers[id] || (() => { document.getElementById(`panel-${id}`).innerHTML = "Coming soon."; }))();
 }
 
