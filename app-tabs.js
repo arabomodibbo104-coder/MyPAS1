@@ -12,11 +12,11 @@ const NAV_BY_ROLE = {
     ["importTool","fa-file-import","Bulk Import"], ["classManagement","fa-school","Manage Classes"],
     ["salaryTracker","fa-money-check-dollar","Salary Tracker"],
     ["transferStudents","fa-people-arrows","Transfer Students"], ["scoreControl","fa-lock","Score Control"],
-    ["printReports","fa-print","Print Report Cards"], ["unassignedStudents","fa-user-slash","Unassigned Students"],
+    ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["unassignedStudents","fa-user-slash","Unassigned Students"],
     ["settings","fa-gear","Settings"],
   ],
-  headmaster: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["settings","fa-gear","My Profile"]],
-  principal: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["settings","fa-gear","My Profile"]],
+  headmaster: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["settings","fa-gear","My Profile"]],
+  principal: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["settings","fa-gear","My Profile"]],
   bursar: [["fees","fa-money-bill","Fees"], ["settings","fa-gear","My Profile"]],
   teacher: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","My Classes"], ["masterlist","fa-list","Master List"], ["settings","fa-gear","My Profile"]],
   student: [["myReport","fa-file-lines","My Report Card"], ["settings","fa-gear","My Profile"]],
@@ -27,7 +27,7 @@ const TAB_TITLES = { dashboard:"Dashboard", classes:"Classes & Scores", masterli
   staffDirectory:"Staff Directory", students:"Students", timetable:"Timetable", certificates:"Certificates & Awards",
   analytics:"Analytics", catracker:"CA Tracker", fees:"Fees", websites:"School Websites", importTool:"Bulk Import",
   classManagement:"Manage Classes", transferStudents:"Transfer Students", scoreControl:"Score Control",
-  printReports:"Print Report Cards", unassignedStudents:"Unassigned Students", salaryTracker:"Salary Tracker",
+  printReports:"Print Report Cards", positionList:"Position List", unassignedStudents:"Unassigned Students", salaryTracker:"Salary Tracker",
   registerStudent:"Register Student",
   settings:"Settings", myReport:"My Report Card" };
 
@@ -67,7 +67,7 @@ function switchTab(id) {
     analytics: renderAnalytics, catracker: renderCaTracker, websites: renderWebsites, importTool: renderImportTool,
     classManagement: renderClassManagement, transferStudents: renderTransferStudents, scoreControl: renderScoreControl,
     printReports: renderPrintReports, registerStudent: renderRegisterStudent, unassignedStudents: renderUnassignedStudents,
-    salaryTracker: renderSalaryTracker };
+    salaryTracker: renderSalaryTracker, positionList: renderPositionList };
   (renderers[id] || (() => { document.getElementById(`panel-${id}`).innerHTML = "Coming soon."; }))();
 }
 

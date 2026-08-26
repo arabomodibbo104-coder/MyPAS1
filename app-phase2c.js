@@ -483,11 +483,16 @@ async function renderAnalytics() {
   const el = document.getElementById("panel-analytics");
   el.innerHTML = `<div class="field"><label>Term</label><select id="anTermSelect" onchange="loadAnalytics()">
     ${state.terms.map(t => `<option value="${t.id}" ${t.id===state.currentTermId?"selected":""}>${t.name}</option>`).join("")}</select></div>
-    <div id="anBody"></div>`;
+    <div id="anBody"></div>
+    <div style="background:#fff;border-radius:10px;padding:14px;margin-top:16px;max-width:700px;">
+      <canvas id="anChart" height="280"></canvas>
+    </div>
+    <div class="no-print" id="anExportHost" style="margin-top:12px;"></div>`;
   await loadAnalytics();
 }
 async function loadAnalytics() {
   const termId = document.getElementById("anTermSelect").value;
+  const term = state.terms.find(t => t.id === termId);
   const body = document.getElementById("anBody");
   body.innerHTML = "Loading…";
   const { data: rows } = await sb.from("student_term_summary").select("class_id, average, classes(name)").eq("term_id", termId);
@@ -503,13 +508,37 @@ async function loadAnalytics() {
   body.innerHTML = `<div class="card-grid">${classNames.map(name => {
     const d = byClass[name];
     const avg = d.count ? (d.total/d.count).toFixed(1) : "—";
-    const passRate = d.count ? Math.round((d.pass/d.count)*100) : 0;
     return statCard("fa-chart-simple", avg, `${name} — Class Average`) ;
   }).join("")}</div>
-  <div style="margin-top:16px;overflow-x:auto;"><table class="data-table">
+  <div style="margin-top:16px;overflow-x:auto;"><table class="data-table" id="analyticsTable">
     <thead><tr><th>Class</th><th>Students Scored</th><th>Class Average</th><th>Pass Rate (≥40)</th></tr></thead>
     <tbody>${classNames.map(name => { const d = byClass[name]; const avg = d.count?(d.total/d.count).toFixed(1):"—"; const pr = d.count?Math.round((d.pass/d.count)*100):0;
       return `<tr><td class="name-cell">${name}</td><td>${d.count}</td><td>${avg}</td><td>${pr}%</td></tr>`; }).join("")}</tbody></table></div>`;
+
+  document.getElementById("anExportHost").innerHTML = classNames.length ? `
+    <button class="btn" onclick="downloadBrandedPdf('Analytics Report','${(term?.name||"").replace(/'/g,"")} — ${(state.schoolSettings.current_session||"").replace(/'/g,"")}',document.getElementById('analyticsTable').outerHTML,'Analytics_${(term?.name||"").replace(/\\s/g,"_")}.pdf')"><i class="fa-solid fa-file-pdf"></i> Download PDF</button>
+    <button class="btn" onclick="downloadBrandedWord('Analytics Report','${(term?.name||"").replace(/'/g,"")} — ${(state.schoolSettings.current_session||"").replace(/'/g,"")}',document.getElementById('analyticsTable').outerHTML,'Analytics_${(term?.name||"").replace(/\\s/g,"_")}.doc')"><i class="fa-solid fa-file-word"></i> Download Word</button>` : "";
+
+  renderAnalyticsChart(classNames, byClass);
+}
+let anChartInstance = null;
+function renderAnalyticsChart(classNames, byClass) {
+  const canvas = document.getElementById("anChart");
+  if (!canvas || typeof Chart === "undefined") return;
+  if (anChartInstance) { anChartInstance.destroy(); anChartInstance = null; }
+  const averages = classNames.map(name => byClass[name].count ? +(byClass[name].total / byClass[name].count).toFixed(1) : 0);
+  const passRates = classNames.map(name => byClass[name].count ? Math.round((byClass[name].pass / byClass[name].count) * 100) : 0);
+  anChartInstance = new Chart(canvas.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels: classNames,
+      datasets: [
+        { label: "Class Average", data: averages, backgroundColor: "#228B2A" },
+        { label: "Pass Rate (%)", data: passRates, backgroundColor: "#4ade80" },
+      ],
+    },
+    options: { responsive: true, scales: { y: { beginAtZero: true, max: 100 } } },
+  });
 }
 
 // ============================================================
