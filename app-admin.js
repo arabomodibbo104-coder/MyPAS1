@@ -390,33 +390,86 @@ async function loadFeesGrid() {
   const cls = state.classes.find(c => c.id === classId);
   const { data: fs } = await sb.from("fee_structure").select("expected_amount").eq("category", cls.category).single();
   const [{ data: students }, { data: payments }] = await Promise.all([
-    sb.from("students").select("id, full_name").eq("class_id", classId).eq("is_active", true).order("full_name"),
+    sb.from("students").select("id, full_name, admission_no").eq("class_id", classId).eq("is_active", true).order("full_name"),
     sb.from("fee_payments").select("*").eq("class_id", classId).eq("term_id", termId),
   ]);
   const payMap = {}; (payments||[]).forEach(p => payMap[p.student_id] = p);
-  grid.innerHTML = `<p style="color:var(--dash-muted);">Expected: ₦${fs?.expected_amount ?? "—"} per student</p>
-    <div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Student</th><th>Amount Paid (₦)</th><th>Status Override</th><th></th></tr></thead>
+  const expected = fs?.expected_amount ?? 0;
+  grid.innerHTML = `<p style="color:var(--dash-muted);">Expected: ₦${expected} per student</p>
+    <div style="overflow-x:auto;"><table class="data-table" id="feesGridTable"><thead><tr><th>Student</th><th>Paid?</th><th>Amount Paid (₦)</th><th></th></tr></thead>
     <tbody>${(students||[]).map(s => { const p = payMap[s.id] || {};
+      const isFullyPaid = p.is_paid_override === true || (p.is_paid_override !== false && (p.amount_paid||0) >= expected);
       return `<tr>
         <td class="name-cell">${s.full_name}</td>
-        <td><input type="number" id="fp_amt_${s.id}" value="${p.amount_paid||0}" style="width:90px;"/></td>
-        <td><select id="fp_ovr_${s.id}">
-          <option value="" ${p.is_paid_override===null||p.is_paid_override===undefined?"selected":""}>Auto</option>
-          <option value="true" ${p.is_paid_override===true?"selected":""}>Force Paid</option>
-          <option value="false" ${p.is_paid_override===false?"selected":""}>Force Unpaid</option>
-        </select></td>
+        <td style="text-align:center;">
+          <input type="checkbox" id="fp_tick_${s.id}" ${isFullyPaid?"checked":""} onchange="tickFeePaid('${s.id}','${classId}','${termId}',${expected})" style="width:18px;height:18px;"/>
+        </td>
+        <td><input type="number" id="fp_amt_${s.id}" value="${p.amount_paid||0}" style="width:90px;" onchange="document.getElementById('fp_tick_${s.id}').dataset.manualAmt='1'"/></td>
         <td><button class="btn btn-green" onclick="saveFeeRow('${s.id}','${classId}','${termId}')">Save</button></td>
-      </tr>`;}).join("")}</tbody></table></div>`;
+      </tr>`;}).join("")}</tbody></table></div>
+    <div class="no-print" style="margin-top:12px;">
+      <button class="btn" onclick="printFeeStatusList('${classId}','${termId}')"><i class="fa-solid fa-file-pdf"></i> Print Payment Status List (PDF)</button>
+    </div>`;
 }
-async function saveFeeRow(studentId, classId, termId) {
+// Ticking the checkbox is a shortcut for "fully paid" — it fills
+// the amount field with the expected fee (so a partial payment
+// typed manually is never silently overwritten) and saves via the
+// normal override-aware path. Unticking clears back to unpaid.
+function tickFeePaid(studentId, classId, termId, expected) {
+  const checked = document.getElementById(`fp_tick_${studentId}`).checked;
+  const amtInput = document.getElementById(`fp_amt_${studentId}`);
+  if (checked) amtInput.value = expected;
+  saveFeeRow(studentId, classId, termId, checked);
+}
+async function saveFeeRow(studentId, classId, termId, forcedPaid) {
   const amount_paid = Number(document.getElementById(`fp_amt_${studentId}`).value) || 0;
-  const ovrRaw = document.getElementById(`fp_ovr_${studentId}`).value;
-  const is_paid_override = ovrRaw === "" ? null : ovrRaw === "true";
+  const is_paid_override = forcedPaid === undefined ? null : forcedPaid;
   const { error } = await sb.from("fee_payments").upsert({
     student_id: studentId, class_id: classId, term_id: termId, amount_paid, is_paid_override,
     updated_by: state.staff ? state.staff.id : null,
   }, { onConflict: "student_id,term_id" });
-  if (error) alert(error.message); else { alert("Saved."); loadFeesOverview(); }
+  if (error) alert(error.message); else { loadFeesOverview(); loadFeesGrid(); }
+}
+
+// ---------- Branded per-class Paid/Unpaid list ----------
+async function printFeeStatusList(classId, termId) {
+  const cls = state.classes.find(c => c.id === classId);
+  const term = state.terms.find(t => t.id === termId);
+  const { data: fs } = await sb.from("fee_structure").select("expected_amount").eq("category", cls.category).single();
+  const expected = fs?.expected_amount ?? 0;
+  const [{ data: students }, { data: payments }] = await Promise.all([
+    sb.from("students").select("id, full_name, admission_no").eq("class_id", classId).eq("is_active", true).order("full_name"),
+    sb.from("fee_payments").select("*").eq("class_id", classId).eq("term_id", termId),
+  ]);
+  const payMap = {}; (payments||[]).forEach(p => payMap[p.student_id] = p);
+
+  const rows = (students||[]).map((s, i) => {
+    const p = payMap[s.id] || {};
+    const paidAmt = p.amount_paid || 0;
+    const isPaid = p.is_paid_override === true || (p.is_paid_override !== false && paidAmt >= expected);
+    const outstanding = Math.max(expected - paidAmt, 0);
+    return `<tr>
+      <td style="text-align:center;">${i+1}</td>
+      <td>${escapeHtml(s.full_name)}</td>
+      <td>${escapeHtml(s.admission_no)}</td>
+      <td style="text-align:center;color:${isPaid?"#16a34a":"#dc2626"};font-weight:800;">${isPaid?"PAID":"UNPAID"}</td>
+      <td style="text-align:right;">₦${outstanding.toLocaleString()}</td>
+    </tr>`;
+  }).join("");
+
+  const bodyHtml = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <thead><tr style="background:#228B2A;color:#fff;">
+      <th style="padding:6px;">S/N</th><th style="padding:6px;text-align:left;">Name</th><th style="padding:6px;text-align:left;">Admission No</th>
+      <th style="padding:6px;">Status</th><th style="padding:6px;text-align:right;">Outstanding</th>
+    </tr></thead>
+    <tbody>${rows}</tbody></table>`;
+
+  await downloadBrandedPdf(
+    "Fee Payment Status List",
+    `${cls.name} — ${term?.name || ""} — ${state.schoolSettings.current_session || ""}`,
+    bodyHtml,
+    `Fee_Status_${cls.name.replace(/\s/g,"_")}_${(term?.name||"").replace(/\s/g,"_")}.pdf`
+  );
 }
 
 // ============================================================
