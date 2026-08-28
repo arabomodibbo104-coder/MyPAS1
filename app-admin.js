@@ -573,12 +573,17 @@ async function renderSettings() {
 }
 async function loadMySalaryStatus() {
   const { data } = await sb.from("staff").select("salary_status").eq("id", state.staff.id).single();
-  const status = (data?.salary_status || {})[state.currentTermId] || null;
+  const termStatus = (data?.salary_status || {})[state.currentTermId] || {};
   const el = document.getElementById("mySalaryStatus");
   if (!el) return;
-  el.innerHTML = status === "Paid" ? `<span style="color:#22c55e;font-weight:800;">✔ Paid</span>`
-    : status === "Unpaid" ? `<span style="color:#ef4444;font-weight:800;">✘ Unpaid</span>`
-    : `<span style="color:var(--dash-muted);">Not recorded yet</span>`;
+  const labelFor = key => key === "month1" ? "1st Month" : key === "month2" ? "2nd Month" : "3rd Month";
+  el.innerHTML = ["month1","month2","month3"].map(key => {
+    const s = termStatus[key];
+    const badge = s === "Paid" ? `<span style="color:#22c55e;font-weight:800;">✔ Paid</span>`
+      : s === "Unpaid" ? `<span style="color:#ef4444;font-weight:800;">✘ Unpaid</span>`
+      : `<span style="color:var(--dash-muted);">Not recorded</span>`;
+    return `<span style="margin-right:12px;">${labelFor(key)}: ${badge}</span>`;
+  }).join("");
 }
 async function saveAdmissionScheme() {
   const student_admission_prefix = document.getElementById("setAdmPrefix").value.trim();

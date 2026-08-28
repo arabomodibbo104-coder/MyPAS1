@@ -1,7 +1,11 @@
 // ============================================================
-// SALARY TRACKER — uses staff.salary_status jsonb (keyed by term
-// id -> 'Paid'/'Unpaid'), admin-only write, any staff can read own.
+// SALARY TRACKER — uses staff.salary_status jsonb, shaped as
+// { [term_id]: { month1: 'Paid'|'Unpaid', month2: ..., month3: ... } }
+// since every term spans 3 months. Admin-only write, any staff can
+// read their own.
 // ============================================================
+const SALARY_MONTHS = [["month1","1st Month"], ["month2","2nd Month"], ["month3","3rd Month"]];
+
 async function renderSalaryTracker() {
   const el = document.getElementById("panel-salaryTracker");
   el.innerHTML = `
@@ -19,39 +23,41 @@ async function loadSalaryTracker() {
   const term = state.terms.find(t => t.id === termId);
 
   const rows = (staff || []).map(s => {
-    const status = (s.salary_status || {})[termId] || null;
-    const badge = status === "Paid"
-      ? `<span class="tag" style="background:rgba(34,197,94,.15);color:#22c55e;">✔ Paid</span>`
-      : status === "Unpaid"
-      ? `<span class="tag" style="background:rgba(239,68,68,.15);color:#ef4444;">✘ Unpaid</span>`
-      : `<span style="color:var(--dash-muted);">—</span>`;
+    const termStatus = (s.salary_status || {})[termId] || {};
+    const monthCells = SALARY_MONTHS.map(([key, label]) => {
+      const paid = termStatus[key] === "Paid";
+      return `<td style="text-align:center;">
+        <label style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;">
+          <input type="checkbox" ${paid?"checked":""} onchange="toggleSalaryMonth('${s.id}','${termId}','${key}',this.checked)" style="width:18px;height:18px;"/>
+          <span style="font-size:9px;color:var(--dash-muted);">${label}</span>
+        </label>
+      </td>`;
+    }).join("");
     return `<tr>
       <td class="name-cell">${s.full_name}</td>
       <td>${s.staff_code}</td>
       <td>${(s.positions||[]).join(", ")}</td>
-      <td>${badge}</td>
-      <td>
-        <button class="btn btn-green no-print" style="font-size:11px;padding:5px 9px;" onclick="setSalaryStatus('${s.id}','${termId}','Paid')">Mark Paid</button>
-        <button class="btn btn-danger no-print" style="font-size:11px;padding:5px 9px;" onclick="setSalaryStatus('${s.id}','${termId}','Unpaid')">Mark Unpaid</button>
-      </td>
+      ${monthCells}
     </tr>`;
   }).join("");
 
   body.innerHTML = `<div style="overflow-x:auto;"><table class="data-table" id="salaryTable">
-    <thead><tr><th>Name</th><th>Staff ID</th><th>Position(s)</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Staff ID</th><th>Position(s)</th>${SALARY_MONTHS.map(([,l])=>`<th>${l}</th>`).join("")}</tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 
   document.getElementById("salExportHost").innerHTML = `
     <button class="btn" onclick="downloadBrandedPdf('Staff Salary Status','${(term?.name||"").replace(/'/g,"")} — ${(state.schoolSettings.current_session||"").replace(/'/g,"")}',document.getElementById('salaryTable').outerHTML,'Salary_Status_${(term?.name||"").replace(/\\s/g,"_")}.pdf')"><i class="fa-solid fa-file-pdf"></i> Download PDF</button>
     <button class="btn" onclick="downloadBrandedWord('Staff Salary Status','${(term?.name||"").replace(/'/g,"")} — ${(state.schoolSettings.current_session||"").replace(/'/g,"")}',document.getElementById('salaryTable').outerHTML,'Salary_Status_${(term?.name||"").replace(/\\s/g,"_")}.doc')"><i class="fa-solid fa-file-word"></i> Download Word</button>`;
 }
-async function setSalaryStatus(staffId, termId, status) {
+async function toggleSalaryMonth(staffId, termId, monthKey, isPaid) {
   const { data: current } = await sb.from("staff").select("salary_status").eq("id", staffId).single();
-  const updated = { ...(current?.salary_status || {}), [termId]: status };
+  const salaryStatus = current?.salary_status || {};
+  const termStatus = { ...(salaryStatus[termId] || {}), [monthKey]: isPaid ? "Paid" : "Unpaid" };
+  const updated = { ...salaryStatus, [termId]: termStatus };
   const { error } = await sb.from("staff").update({ salary_status: updated }).eq("id", staffId);
-  if (error) { alert(error.message); return; }
-  loadSalaryTracker();
+  if (error) { alert(error.message); loadSalaryTracker(); }
 }
+
 
 // ============================================================
 // BRANDED EXPORT UTILITY — reusable letter-headed PDF/Word export,
