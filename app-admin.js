@@ -124,6 +124,7 @@ function openStaffForm(staff) {
     ${staff ? `<p style="font-size:11px;color:var(--dash-muted);margin-top:-8px;">Changing the Staff ID requires setting a new password below too — otherwise their account gets locked out.</p>` : ""}
     <div class="field"><label>Phone</label><input id="sfPhone" value="${staff?.phone||""}"/></div>
     <div class="field"><label>Email</label><input id="sfEmail" value="${staff?.email||""}"/></div>
+    <div class="field"><label>Monthly Salary (₦)</label><input id="sfSalary" type="number" value="${staff?.monthly_salary||0}"/></div>
     <div class="field"><label>Positions</label>
       <div class="pill-list">${positions.map(p => `<label style="display:flex;align-items:center;gap:4px;font-size:11px;">
         <input type="checkbox" value="${p}" ${staff?.positions?.includes(p)?"checked":""} class="sfPosCheck"/> ${p}</label>`).join("")}</div>
@@ -137,6 +138,7 @@ async function saveStaff(staffId) {
   const originalCode = document.getElementById("sfCode").dataset.original || "";
   const phone = document.getElementById("sfPhone").value.trim();
   const email = document.getElementById("sfEmail").value.trim();
+  const monthly_salary = Number(document.getElementById("sfSalary").value) || 0;
   const password = document.getElementById("sfPassword").value;
   const positions = [...document.querySelectorAll(".sfPosCheck:checked")].map(c => c.value);
   const is_admin = positions.includes("Admin");
@@ -147,12 +149,12 @@ async function saveStaff(staffId) {
 
   let row;
   if (staffId) {
-    const { data, error } = await sb.from("staff").update({ full_name, staff_code, phone, email, positions, is_admin, updated_at: new Date().toISOString() }).eq("id", staffId).select().single();
+    const { data, error } = await sb.from("staff").update({ full_name, staff_code, phone, email, monthly_salary, positions, is_admin, updated_at: new Date().toISOString() }).eq("id", staffId).select().single();
     if (error) { alert(error.message); return; }
     row = data;
   } else {
     const password_hash_res = await sb.rpc("hash_secret", { p_plain: password });
-    const { data, error } = await sb.from("staff").insert({ full_name, staff_code, phone, email, positions, is_admin, password_hash: password_hash_res.data }).select().single();
+    const { data, error } = await sb.from("staff").insert({ full_name, staff_code, phone, email, monthly_salary, positions, is_admin, password_hash: password_hash_res.data }).select().single();
     if (error) { alert(error.message); return; }
     row = data;
   }
@@ -519,6 +521,12 @@ async function renderSettings() {
       </div>
       <button class="btn btn-green" onclick="saveSignatureSettings()">Save Signatures</button>
     </div>
+    <div class="settings-card" id="feeStructureCard">
+      <div class="settings-card-title">School Fees Amount (per Term)</div>
+      <p style="font-size:12px;color:var(--dash-muted);">These are the amounts every student is expected to pay each term, used everywhere fees are checked (report card lock, Fees Overview, Payment Status List).</p>
+      <div id="feeStructureBody">Loading…</div>
+      <button class="btn btn-green" onclick="saveFeeStructure()">Save Fee Amounts</button>
+    </div>
     <div class="settings-card">
       <div class="settings-card-title">Registrar Admission Number Scheme</div>
       <p style="font-size:12px;color:var(--dash-muted);">Controls the automatic admission number registrars get when registering a new student (e.g. prefix "SU2026" + next number "27" → next registration gets SU20260027). After a bulk ID reset, update the next number here so new registrations don't collide with existing ones.</p>
@@ -568,7 +576,7 @@ async function renderSettings() {
     <button class="btn btn-green" onclick="changeMyPassword()">Update Password</button>
   </div>`;
   el.innerHTML = html;
-  if (state.role === "admin") { loadTermDatesForm(); loadAdmSchemeInfo(); }
+  if (state.role === "admin") { loadTermDatesForm(); loadAdmSchemeInfo(); loadFeeStructureForm(); }
   if (state.staff) loadMySalaryStatus();
 }
 async function loadMySalaryStatus() {
@@ -672,11 +680,29 @@ async function saveSignatureSettings() {
     principal_fallback_name: document.getElementById("setPrincipalName").value,
     principal_fallback_sig_url: document.getElementById("setPrincipalSig").value,
     admin_officer_fallback_name: document.getElementById("setAdminOfficerName").value,
-    admin_officer_fallback_sig_url: document.getElementById("setAdminOfficerSig").value,
     updated_at: new Date().toISOString(),
   };
   const { error } = await sb.from("school_settings").update(payload).eq("id", true);
   if (error) alert(error.message); else { alert("Saved."); Object.assign(state.schoolSettings, payload); }
+}
+async function loadFeeStructureForm() {
+  const { data: rows } = await sb.from("fee_structure").select("category, expected_amount");
+  const byCategory = {}; (rows||[]).forEach(r => byCategory[r.category] = r.expected_amount);
+  document.getElementById("feeStructureBody").innerHTML = `
+    <div class="field"><label>Nursery (per term)</label><input id="feeAmtNursery" type="number" value="${byCategory.nursery||0}"/></div>
+    <div class="field"><label>Primary (per term)</label><input id="feeAmtPrimary" type="number" value="${byCategory.primary||0}"/></div>
+    <div class="field"><label>JSS (per term)</label><input id="feeAmtJss" type="number" value="${byCategory.jss||0}"/></div>
+    <div class="field"><label>SS (per term)</label><input id="feeAmtSs" type="number" value="${byCategory.ss||0}"/></div>`;
+}
+async function saveFeeStructure() {
+  const updates = [
+    { category: "nursery", expected_amount: Number(document.getElementById("feeAmtNursery").value) || 0 },
+    { category: "primary", expected_amount: Number(document.getElementById("feeAmtPrimary").value) || 0 },
+    { category: "jss", expected_amount: Number(document.getElementById("feeAmtJss").value) || 0 },
+    { category: "ss", expected_amount: Number(document.getElementById("feeAmtSs").value) || 0 },
+  ];
+  const { error } = await sb.from("fee_structure").upsert(updates, { onConflict: "category" });
+  if (error) alert(error.message); else alert("Fee amounts saved. These apply immediately everywhere fees are checked.");
 }
 async function savePin() {
   const pin_type = document.getElementById("pinType").value;

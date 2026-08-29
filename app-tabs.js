@@ -10,7 +10,7 @@ const NAV_BY_ROLE = {
     ["analytics","fa-chart-line","Analytics"], ["catracker","fa-list-check","CA Tracker"],
     ["fees","fa-money-bill","Fees"], ["websites","fa-globe","School Websites"],
     ["importTool","fa-file-import","Bulk Import"], ["classManagement","fa-school","Manage Classes"],
-    ["salaryTracker","fa-money-check-dollar","Salary Tracker"],
+    ["salaryTracker","fa-money-check-dollar","Salary Tracker"], ["financialAnalytics","fa-sack-dollar","Financial Analytics"],
     ["transferStudents","fa-people-arrows","Transfer Students"], ["scoreControl","fa-lock","Score Control"],
     ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["unassignedStudents","fa-user-slash","Unassigned Students"],
     ["settings","fa-gear","Settings"],
@@ -28,6 +28,7 @@ const TAB_TITLES = { dashboard:"Dashboard", classes:"Classes & Scores", masterli
   analytics:"Analytics", catracker:"CA Tracker", fees:"Fees", websites:"School Websites", importTool:"Bulk Import",
   classManagement:"Manage Classes", transferStudents:"Transfer Students", scoreControl:"Score Control",
   printReports:"Print Report Cards", positionList:"Position List", unassignedStudents:"Unassigned Students", salaryTracker:"Salary Tracker",
+  financialAnalytics:"Financial Analytics",
   registerStudent:"Register Student",
   settings:"Settings", myReport:"My Report Card" };
 
@@ -67,7 +68,7 @@ function switchTab(id) {
     analytics: renderAnalytics, catracker: renderCaTracker, websites: renderWebsites, importTool: renderImportTool,
     classManagement: renderClassManagement, transferStudents: renderTransferStudents, scoreControl: renderScoreControl,
     printReports: renderPrintReports, registerStudent: renderRegisterStudent, unassignedStudents: renderUnassignedStudents,
-    salaryTracker: renderSalaryTracker, positionList: renderPositionList };
+    salaryTracker: renderSalaryTracker, positionList: renderPositionList, financialAnalytics: renderFinancialAnalytics };
   (renderers[id] || (() => { document.getElementById(`panel-${id}`).innerHTML = "Coming soon."; }))();
 }
 
