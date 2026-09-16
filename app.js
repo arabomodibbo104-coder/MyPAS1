@@ -181,6 +181,13 @@ async function loadReferenceData() {
 
   document.getElementById("loginSchoolName").textContent = state.schoolSettings.school_name || "Pariya School Management System";
   document.getElementById("sidebarSchoolName").textContent = state.schoolSettings.school_name || "Pariya SMS";
+
+  // Apply the school-wide dashboard theme once settings are loaded
+  // (dark mode only — light mode uses its own palette).
+  if (typeof applyDashboardTheme === "function" && state.schoolSettings.dashboard_theme
+      && document.documentElement.getAttribute("data-theme") !== "light") {
+    applyDashboardTheme(state.schoolSettings.dashboard_theme);
+  }
 }
 
 function showAppShell(show) {
@@ -218,4 +225,34 @@ function openModal(html) {
   document.getElementById("modalOverlay").classList.add("show");
 }
 function closeModal() { document.getElementById("modalOverlay").classList.remove("show"); }
+
+// Shared helper: class+subject combinations the current caller may
+// act on. Admin sees all; headmaster/principal see their section;
+// a plain teacher sees only their own assignments.
+async function getMyAssessableClassSubjects() {
+  const roles = state.allRoles || [state.role];
+  if (roles.includes("admin")) {
+    const { data } = await sb.from("class_subjects").select("class_id, subject_id, classes(name), subjects(name)");
+    return (data || []).map(r => ({ class_id: r.class_id, subject_id: r.subject_id, class_name: r.classes?.name, subject_name: r.subjects?.name }));
+  }
+  if (roles.includes("headmaster") || roles.includes("principal")) {
+    const cats = roles.includes("headmaster") ? ["nursery", "primary"] : ["jss", "ss"];
+    const { data } = await sb.from("class_subjects").select("class_id, subject_id, classes!inner(name, category), subjects(name)").in("classes.category", cats);
+    return (data || []).map(r => ({ class_id: r.class_id, subject_id: r.subject_id, class_name: r.classes?.name, subject_name: r.subjects?.name }));
+  }
+  if (!state.staff) return [];
+  const { data } = await sb.from("class_teacher_subjects").select("class_id, subject_id, classes(name), subjects(name)").eq("staff_id", state.staff.id);
+  return (data || []).map(r => ({ class_id: r.class_id, subject_id: r.subject_id, class_name: r.classes?.name, subject_name: r.subjects?.name }));
+}
+function showToast(message, type) {
+  type = type || "success";
+  const icons = { success: "fa-circle-check", error: "fa-circle-xmark", info: "fa-circle-info" };
+  const host = document.getElementById("toastHost");
+  if (!host) return;
+  const el = document.createElement("div");
+  el.className = `toast toast-${type}`;
+  el.innerHTML = `<i class="fa-solid ${icons[type] || icons.success}"></i><span>${message}</span>`;
+  host.appendChild(el);
+  setTimeout(() => { el.classList.add("toast-out"); setTimeout(() => el.remove(), 220); }, 3200);
+}
 document.getElementById("modalOverlay").addEventListener("click", (e) => { if (e.target.id === "modalOverlay") closeModal(); });

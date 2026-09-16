@@ -13,13 +13,14 @@ const NAV_BY_ROLE = {
     ["salaryTracker","fa-money-check-dollar","Salary Tracker"], ["financialAnalytics","fa-sack-dollar","Financial Analytics"],
     ["transferStudents","fa-people-arrows","Transfer Students"], ["scoreControl","fa-lock","Score Control"],
     ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["unassignedStudents","fa-user-slash","Unassigned Students"],
+    ["announcements","fa-bullhorn","Announcements"],
     ["settings","fa-gear","Settings"],
   ],
-  headmaster: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["settings","fa-gear","My Profile"]],
-  principal: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["settings","fa-gear","My Profile"]],
+  headmaster: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["announcements","fa-bullhorn","Announcements"], ["settings","fa-gear","My Profile"]],
+  principal: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["announcements","fa-bullhorn","Announcements"], ["settings","fa-gear","My Profile"]],
   bursar: [["fees","fa-money-bill","Fees"], ["settings","fa-gear","My Profile"]],
-  teacher: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","My Classes"], ["masterlist","fa-list","Master List"], ["settings","fa-gear","My Profile"]],
-  student: [["myReport","fa-file-lines","My Report Card"], ["settings","fa-gear","My Profile"]],
+  teacher: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","My Classes"], ["masterlist","fa-list","Master List"], ["announcements","fa-bullhorn","Announcements"], ["settings","fa-gear","My Profile"]],
+  student: [["myReport","fa-file-lines","My Report Card"], ["announcements","fa-bullhorn","Announcements"], ["settings","fa-gear","My Profile"]],
   registrar_primary: [["registerStudent","fa-user-plus","Register Student"], ["masterlist","fa-list","Master List"], ["settings","fa-gear","My Profile"]],
   registrar_secondary: [["registerStudent","fa-user-plus","Register Student"], ["masterlist","fa-list","Master List"], ["settings","fa-gear","My Profile"]],
 };
@@ -28,7 +29,7 @@ const TAB_TITLES = { dashboard:"Dashboard", classes:"Classes & Scores", masterli
   analytics:"Analytics", catracker:"CA Tracker", fees:"Fees", websites:"School Websites", importTool:"Bulk Import",
   classManagement:"Manage Classes", transferStudents:"Transfer Students", scoreControl:"Score Control",
   printReports:"Print Report Cards", positionList:"Position List", unassignedStudents:"Unassigned Students", salaryTracker:"Salary Tracker",
-  financialAnalytics:"Financial Analytics",
+  financialAnalytics:"Financial Analytics", announcements:"Announcements",
   registerStudent:"Register Student",
   settings:"Settings", myReport:"My Report Card" };
 
@@ -57,6 +58,7 @@ function buildSidebar() {
 }
 
 function switchTab(id) {
+  if (typeof unsubscribeAllLive === "function") unsubscribeAllLive();
   document.querySelectorAll(".sidebar-item").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
   document.getElementById("topbarTitle").textContent = TAB_TITLES[id] || id;
   toggleSidebar(false);
@@ -68,7 +70,8 @@ function switchTab(id) {
     analytics: renderAnalytics, catracker: renderCaTracker, websites: renderWebsites, importTool: renderImportTool,
     classManagement: renderClassManagement, transferStudents: renderTransferStudents, scoreControl: renderScoreControl,
     printReports: renderPrintReports, registerStudent: renderRegisterStudent, unassignedStudents: renderUnassignedStudents,
-    salaryTracker: renderSalaryTracker, positionList: renderPositionList, financialAnalytics: renderFinancialAnalytics };
+    salaryTracker: renderSalaryTracker, positionList: renderPositionList, financialAnalytics: renderFinancialAnalytics,
+    announcements: renderAnnouncements };
   (renderers[id] || (() => { document.getElementById(`panel-${id}`).innerHTML = "Coming soon."; }))();
 }
 
@@ -121,18 +124,39 @@ async function renderClasses() {
 }
 
 async function openClass(classId) {
+  if (typeof unsubscribeAllLive === "function") unsubscribeAllLive();
   state.currentClass = state.classes.find(c => c.id === classId);
   const el = document.getElementById("tabRoot");
   el.innerHTML = `<div class="tab-panel active">
     <button class="btn" onclick="switchTab('classes')"><i class="fa-solid fa-arrow-left"></i> Back to Classes</button>
     <h2 style="font-family:var(--font-display);margin:14px 0 4px;">${state.currentClass.name}</h2>
     <div class="term-pills" id="termPills"></div>
+    <div id="liveUpdateBanner" style="display:none;"></div>
     <div id="classBody"></div>
   </div>`;
   document.getElementById("termPills").innerHTML = state.terms.map(t =>
     `<div class="term-pill ${t.id === state.currentTermId ? "active" : ""}" onclick="setClassTerm('${t.id}')">${t.name}</div>`
   ).join("");
   await loadClassScoreGrid();
+
+  // Scores need a safety valve: this grid IS the editable form, so a
+  // naive auto-reload could wipe a teacher's unsaved keystrokes. If
+  // nothing is unsaved, refresh silently; otherwise show a banner and
+  // let them decide when to refresh.
+  if (typeof subscribeLive === "function") {
+    const onScoreChange = () => {
+      const dirty = document.querySelectorAll('#classBody input[data-dirty="1"]').length;
+      if (dirty === 0) { loadClassScoreGrid(); return; }
+      const banner = document.getElementById("liveUpdateBanner");
+      if (banner) {
+        banner.style.display = "block";
+        banner.innerHTML = `<div class="badge badge-warning" style="cursor:pointer;margin-bottom:10px;" onclick="loadClassScoreGrid()">🔄 New updates available — you have unsaved changes. Click to refresh anyway (unsaved edits will be lost).</div>`;
+      }
+    };
+    subscribeLive("student_scores_changes", onScoreChange);
+    subscribeLive("term_period_windows_changes", onScoreChange);
+    subscribeLive("subject_score_locks_changes", onScoreChange);
+  }
 }
 function setClassTerm(termId) {
   state.currentTermId = termId;

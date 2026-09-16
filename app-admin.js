@@ -521,6 +521,7 @@ async function renderSettings() {
       </div>
       <button class="btn btn-green" onclick="saveSignatureSettings()">Save Signatures</button>
     </div>
+    ${typeof renderDashboardThemePicker === "function" ? renderDashboardThemePicker() : ""}
     <div class="settings-card" id="feeStructureCard">
       <div class="settings-card-title">School Fees Amount (per Term)</div>
       <p style="font-size:12px;color:var(--dash-muted);">These are the amounts every student is expected to pay each term, used everywhere fees are checked (report card lock, Fees Overview, Payment Status List).</p>
