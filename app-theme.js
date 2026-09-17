@@ -71,6 +71,17 @@ const DASHBOARD_THEMES = {
       "--dash-info":"#60A5FA", "--dash-info-soft":"rgba(96,165,250,0.14)", "--dash-blue":"#60A5FA",
     },
   },
+  white: {
+    label: "Pure White", swatch: "#FFFFFF",
+    vars: {
+      "--dash-bg":"#FFFFFF", "--dash-surface":"#F7F8FA", "--dash-card":"#FFFFFF", "--dash-card-2":"#F1F3F5", "--dash-border":"#E2E5E9",
+      "--dash-green":"#16A34A", "--dash-green-2":"#15803D", "--dash-green-soft":"rgba(22,163,74,0.10)", "--dash-green-glow":"rgba(22,163,74,0.20)",
+      "--dash-text":"#1A1F26", "--dash-muted":"#6B7280", "--dash-accent":"#16A34A",
+      "--dash-danger":"#DC2626", "--dash-danger-soft":"rgba(220,38,38,0.10)",
+      "--dash-warning":"#D97706", "--dash-warning-soft":"rgba(217,119,6,0.10)",
+      "--dash-info":"#2563EB", "--dash-info-soft":"rgba(37,99,235,0.10)", "--dash-blue":"#2563EB",
+    },
+  },
 };
 
 function applyDashboardTheme(name) {
