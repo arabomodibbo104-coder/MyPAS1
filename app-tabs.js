@@ -3,26 +3,41 @@
 // ============================================================
 const NAV_BY_ROLE = {
   admin: [
-    ["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"],
-    ["masterlist","fa-list","Master List"], ["assignments","fa-diagram-project","Curriculum & Assignments"],
+    ["dashboard","fa-gauge","Dashboard"], ["analytics","fa-chart-line","Analytics"], ["catracker","fa-list-check","CA Tracker"],
+    ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"],
+    ["assignments","fa-diagram-project","Curriculum & Assignments"], ["timetable","fa-calendar-days","Timetable"],
+    ["scoreControl","fa-lock","Score Control"], ["printReports","fa-print","Print Report Cards"],
+    ["positionList","fa-ranking-star","Position List"], ["certificates","fa-award","Certificates & Awards"],
+    ["classManagement","fa-school","Manage Classes"], ["transferStudents","fa-people-arrows","Transfer Students"],
+    ["unassignedStudents","fa-user-slash","Unassigned Students"],
     ["staffDirectory","fa-user-tie","Staff Directory"], ["students","fa-user-graduate","Students"],
-    ["timetable","fa-calendar-days","Timetable"], ["certificates","fa-award","Certificates & Awards"],
-    ["analytics","fa-chart-line","Analytics"], ["catracker","fa-list-check","CA Tracker"],
-    ["fees","fa-money-bill","Fees"], ["websites","fa-globe","School Websites"],
-    ["importTool","fa-file-import","Bulk Import"], ["classManagement","fa-school","Manage Classes"],
-    ["salaryTracker","fa-money-check-dollar","Salary Tracker"], ["financialAnalytics","fa-sack-dollar","Financial Analytics"],
-    ["transferStudents","fa-people-arrows","Transfer Students"], ["scoreControl","fa-lock","Score Control"],
-    ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["unassignedStudents","fa-user-slash","Unassigned Students"],
+    ["fees","fa-money-bill","Fees"], ["salaryTracker","fa-money-check-dollar","Salary Tracker"], ["financialAnalytics","fa-sack-dollar","Financial Analytics"],
+    ["websites","fa-globe","School Websites"], ["importTool","fa-file-import","Bulk Import"],
     ["announcements","fa-bullhorn","Announcements"],
     ["settings","fa-gear","Settings"],
   ],
-  headmaster: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["announcements","fa-bullhorn","Announcements"], ["settings","fa-gear","My Profile"]],
-  principal: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["certificates","fa-award","Certificates & Awards"], ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["announcements","fa-bullhorn","Announcements"], ["settings","fa-gear","My Profile"]],
+  headmaster: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["certificates","fa-award","Certificates & Awards"], ["announcements","fa-bullhorn","Announcements"], ["settings","fa-gear","My Profile"]],
+  principal: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","Classes & Scores"], ["masterlist","fa-list","Master List"], ["printReports","fa-print","Print Report Cards"], ["positionList","fa-ranking-star","Position List"], ["certificates","fa-award","Certificates & Awards"], ["announcements","fa-bullhorn","Announcements"], ["settings","fa-gear","My Profile"]],
   bursar: [["fees","fa-money-bill","Fees"], ["settings","fa-gear","My Profile"]],
   teacher: [["dashboard","fa-gauge","Dashboard"], ["classes","fa-chalkboard","My Classes"], ["masterlist","fa-list","Master List"], ["announcements","fa-bullhorn","Announcements"], ["settings","fa-gear","My Profile"]],
   student: [["myReport","fa-file-lines","My Report Card"], ["announcements","fa-bullhorn","Announcements"], ["settings","fa-gear","My Profile"]],
   registrar_primary: [["registerStudent","fa-user-plus","Register Student"], ["masterlist","fa-list","Master List"], ["settings","fa-gear","My Profile"]],
   registrar_secondary: [["registerStudent","fa-user-plus","Register Student"], ["masterlist","fa-list","Master List"], ["settings","fa-gear","My Profile"]],
+};
+// Purely a display grouping for the sidebar (adds section labels like
+// the screenshot's OVERVIEW / ACADEMIC / STUDENTS headers). Does not
+// change tab ids, routing, or any Supabase query — see buildSidebar().
+const NAV_SECTION_OF = {
+  dashboard: "Overview", analytics: "Overview", catracker: "Overview",
+  classes: "Academic", masterlist: "Academic", assignments: "Academic", timetable: "Academic",
+  scoreControl: "Academic", printReports: "Academic", positionList: "Academic", certificates: "Academic",
+  classManagement: "Academic", transferStudents: "Academic", unassignedStudents: "Academic", registerStudent: "Academic",
+  myReport: "Academic",
+  staffDirectory: "People", students: "People",
+  fees: "Finance", salaryTracker: "Finance", financialAnalytics: "Finance",
+  websites: "Tools", importTool: "Tools",
+  announcements: "Communication",
+  settings: "Account",
 };
 const TAB_TITLES = { dashboard:"Dashboard", classes:"Classes & Scores", masterlist:"Master List", assignments:"Curriculum & Assignments",
   staffDirectory:"Staff Directory", students:"Students", timetable:"Timetable", certificates:"Certificates & Awards",
@@ -44,9 +59,20 @@ function buildSidebar() {
       if (!seen.has(item[0])) { seen.add(item[0]); nav.push(item); }
     });
   });
-  document.getElementById("sidebarNav").innerHTML = nav.map(([id,icon,label]) =>
-    `<button class="sidebar-item" data-tab="${id}" onclick="switchTab('${id}')"><span class="si-icon"><i class="fa-solid ${icon}"></i></span>${label}</button>`
-  ).join("");
+  // Insert a section label whenever the group changes from the item
+  // before it (e.g. OVERVIEW, ACADEMIC, PEOPLE…) — cosmetic only,
+  // grouping the same tabs/ids/renderers this app already has.
+  let lastSection = null;
+  const navHtml = nav.map(([id,icon,label]) => {
+    const section = NAV_SECTION_OF[id] || "";
+    let header = "";
+    if (section && section !== lastSection) {
+      header = `<div style="padding:${lastSection===null?"4px":"16px"} 12px 6px;font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--dash-muted);">${section}</div>`;
+      lastSection = section;
+    }
+    return header + `<button class="sidebar-item" data-tab="${id}" onclick="switchTab('${id}')"><span class="si-icon"><i class="fa-solid ${icon}"></i></span>${label}</button>`;
+  }).join("");
+  document.getElementById("sidebarNav").innerHTML = navHtml;
   const roleLabels = { registrar_primary: "Registrar (Primary/Nursery)", registrar_secondary: "Registrar (JSS/SS)" };
   const displayLabel = r => roleLabels[r] || (r.charAt(0).toUpperCase() + r.slice(1));
   const roleText = (state.allRoles && state.allRoles.length > 1)
